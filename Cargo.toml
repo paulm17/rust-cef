@@ -1,0 +1,42 @@
+[package]
+name = "rust-cef"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+winit = "0.29"
+cef = { git = "https://github.com/tauri-apps/cef-rs" }
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+raw-window-handle = "0.6"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rfd = "0.14"
+tray-icon = "0.19"
+muda = "0.15"
+arboard = "3.4"
+rust-embed = "8.5"
+mime_guess = "2.0"
+objc2 = "0.5.2"
+objc2-app-kit = "0.2.2"
+base64 = "0.22.1"
+url = "2.5.8"
+libc = "0.2.182"
+
+[package.metadata.packager]
+product_name = "Rust CEF"
+identifier = "com.rustcef.app"
+version = "0.1.0"
+before_packaging_command = "echo 'Packaging...'"
+icons = ["icons/app_icon.png"]
+
+[package.metadata.packager.macos]
+frameworks = ["target/release/Frameworks/Chromium Embedded Framework.framework"]
+entitlements = "Entitlements.plist"
+signing_identity = "-"
+
+
+
+

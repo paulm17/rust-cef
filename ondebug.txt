@@ -1,0 +1,13 @@
+# When target directory is deleted, run these commands to restore CEF files needed for running `cargo run`:
+
+# 1. Create the Frameworks directory expected by the LibraryLoader
+mkdir -p target/Frameworks
+
+# 2. Find and copy the CEF Framework to target/Frameworks
+# Note: The hash in 'cef-dll-sys-*' may change after a clean build. Use wildcard * to match it.
+cp -r target/debug/build/cef-dll-sys-*/out/cef_macos_aarch64/"Chromium Embedded Framework.framework" target/Frameworks/
+
+# 3. Copy the GPU libraries to the executable directory (target/debug)
+# These are needed for the GPU process to start correctly.
+cp target/debug/build/cef-dll-sys-*/out/cef_macos_aarch64/"Chromium Embedded Framework.framework"/Libraries/libGLESv2.dylib target/debug/
+cp target/debug/build/cef-dll-sys-*/out/cef_macos_aarch64/"Chromium Embedded Framework.framework"/Libraries/libEGL.dylib target/debug/
