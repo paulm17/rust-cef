@@ -90,6 +90,7 @@ pub struct App {
     router: CommandRouter,
     dev_config: Option<DevConfig>,
     on_ready: Option<Box<dyn Fn(&AppHandle) + Send + Sync>>,
+    on_exit: Option<Box<dyn Fn() + Send + Sync>>,
 }
 
 impl App {
@@ -104,6 +105,7 @@ impl App {
             router: CommandRouter::new(),
             dev_config: None,
             on_ready: None,
+            on_exit: None,
         }
     }
 
@@ -138,6 +140,14 @@ impl App {
         F: Fn(&AppHandle) + Send + Sync + 'static,
     {
         self.on_ready = Some(Box::new(callback));
+        self
+    }
+
+    pub fn on_exit<F>(mut self, callback: F) -> Self
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        self.on_exit = Some(Box::new(callback));
         self
     }
 
@@ -613,6 +623,7 @@ impl App {
 
         // Extract on_ready callback to move into loop
         let on_ready_callback = self.on_ready;
+        let on_exit_callback = self.on_exit;
 
         // 5. RUN THE EVENT LOOP
         print_debug("========================================");
@@ -693,6 +704,11 @@ impl App {
                          // Also try normal kill as fallback
                          let _ = child.kill();
                          let _ = child.wait();
+                     }
+
+                     if let Some(callback) = &on_exit_callback {
+                         print_debug("DEBUG: Executing on_exit callback");
+                         callback();
                      }
 
                      print_debug("DEBUG: Event loop exiting, shutting down CEF");
@@ -798,48 +814,75 @@ unsafe fn fix_winit_crash() {
     
     // Get shared application
     let app: Option<&AnyObject> = msg_send![class!(NSApplication), sharedApplication];
+    
+    // Declare class_addMethod once for the whole function
+    #[link(name = "objc", kind = "dylib")]
+    extern "C" {
+        fn class_addMethod(
+            cls: &AnyClass,
+            name: Sel,
+            imp: *const std::ffi::c_void,
+            types: *const std::ffi::c_char,
+        ) -> Bool;
+    }
+
     if let Some(app) = app {
         let cls: &AnyClass = msg_send![app, class];
         let cls_name = cls.name();
         print_debug(&format!("DEBUG: Current NSApp class: {:?}", cls_name));
         
+        // 1. Patch isHandlingSendEvent
         let selector = sel!(isHandlingSendEvent);
         if !cls.responds_to(selector) {
             print_debug(&format!("DEBUG: Class {} missing isHandlingSendEvent - patching...", cls_name));
             
             // Define implementation: returns NO (false)
             extern "C" fn is_handling_send_event_impl(_this: &AnyObject, _cmd: Sel) -> Bool {
-                print_debug("DEBUG: Shim isHandlingSendEvent called!");
+                // print_debug("DEBUG: Shim isHandlingSendEvent called!"); // Too noisy
                 Bool::NO
             }
             
-            // Add method to class
-            // We use raw C function access for class_addMethod as it might not be exposed safely
-            #[link(name = "objc", kind = "dylib")]
-            extern "C" {
-                fn class_addMethod(
-                    cls: &AnyClass,
-                    name: Sel,
-                    imp: unsafe extern "C" fn(&AnyObject, Sel) -> Bool,
-                    types: *const std::ffi::c_char,
-                ) -> Bool;
-            }
             
             let types = std::ffi::CString::new("B@:").unwrap();
             let success = class_addMethod(
                 cls,
                 selector,
-                is_handling_send_event_impl,
+                is_handling_send_event_impl as *const _,
                 types.as_ptr(),
             );
             
             if success.as_bool() {
-                print_debug("DEBUG: Patched successfully!");
+                print_debug("DEBUG: Patched isHandlingSendEvent successfully!");
             } else {
-                print_debug("DEBUG: Failed to patch class!");
+                print_debug("DEBUG: Failed to patch isHandlingSendEvent!");
             }
         } else {
-             eprintln!("DEBUG: Class {} already has isHandlingSendEvent", cls_name);
+             // eprintln!("DEBUG: Class {} already has isHandlingSendEvent", cls_name);
+        }
+
+        // 2. Patch setHandlingSendEvent:
+        let set_selector = sel!(setHandlingSendEvent:);
+        if !cls.responds_to(set_selector) {
+            print_debug(&format!("DEBUG: Class {} missing setHandlingSendEvent: - patching...", cls_name));
+
+            // Define implementation: accepts BOOL, returns void
+            extern "C" fn set_handling_send_event_impl(_this: &AnyObject, _cmd: Sel, _val: Bool) {
+                // print_debug("DEBUG: Shim setHandlingSendEvent: called!"); 
+            }
+
+            let types = std::ffi::CString::new("v@:B").unwrap();
+            let success = class_addMethod(
+                cls,
+                set_selector,
+                set_handling_send_event_impl as *const _,
+                types.as_ptr(),
+            );
+
+            if success.as_bool() {
+                print_debug("DEBUG: Patched setHandlingSendEvent: successfully!");
+            } else {
+                print_debug("DEBUG: Failed to patch setHandlingSendEvent:!");
+            }
         }
     }
 }

@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 winit = "0.29"
-cef = { git = "https://github.com/tauri-apps/cef-rs" }
+cef = { git = "https://github.com/tauri-apps/cef-rs", rev = "145bbc50358645eeee7339ad81f71dd36b62f962" }
 tokio = { version = "1", features = ["full"] }
 axum = "0.7"
 tracing = "0.1"
@@ -36,7 +36,6 @@ icons = ["icons/app_icon.png"]
 frameworks = ["target/release/Frameworks/Chromium Embedded Framework.framework"]
 entitlements = "Entitlements.plist"
 signing_identity = "-"
-
 
 
 
