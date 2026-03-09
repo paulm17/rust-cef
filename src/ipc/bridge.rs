@@ -199,8 +199,12 @@ impl CommandRouter {
             Ok(serde_json::json!(result))
         });
 
-        // Window creation
+        // Window creation and configuration
         self.register("create_window", crate::ipc::commands::window::create_window);
+        self.register("set_window_config", crate::ipc::commands::window::set_window_config);
+        
+        // OS Integration
+        self.register("set_badge_count", crate::ipc::commands::os::set_badge_count);
 
         // File System Commands
         self.register("read_file", |args, _| crate::ipc::commands::fs::read_file(args));

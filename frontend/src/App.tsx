@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import reactLogo from './assets/react.svg'
 import viteLogo from '/vite.svg'
 import './App.css'
-import { invoke, RustFileSystem, RustWindow } from './rust-api'
+import { invoke, RustFileSystem, RustWindow, RustOS } from './rust-api'
 import type { ShowMessageDialogRequest } from './types'
 
 interface AppInfo {
@@ -18,6 +18,11 @@ function App() {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
   const [error, setError] = useState('')
   const [logs, setLogs] = useState<string[]>([])
+  const [badgeCount, setBadgeCount] = useState(0)
+  const [transparent, setTransparent] = useState(false)
+  const [alwaysOnTop, setAlwaysOnTop] = useState(false)
+  const [frameless, setFrameless] = useState(false)
+  const [kiosk, setKiosk] = useState(false)
 
   const addLog = (msg: string) => setLogs(prev => [...prev, msg])
 
@@ -83,19 +88,55 @@ function App() {
 
   const handleCreateWindow = async () => {
     setError('');
-    addLog(`→ RustWindow.create()`);
+    addLog(`→ invoke('create_window')`);
     try {
       const result = await RustWindow.create({
-        url: 'data:text/html,<html><body style="background: %231a1a2e; color: white; display: flex; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif;"><h1>Hello Window</h1></body></html>',
-        title: `Secondary Window ${Date.now()}`
+        url: 'data:text/html,<html><body style="font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#242424;color:white;"><h1>Hello Window!</h1></body></html>',
+        title: `Secondary Window ${Date.now()}`,
+        width: 600,
+        height: 400
       });
-      addLog(`✓ Result: ${result.status} - ${result.url}`);
+      addLog(`✓ Window ${result.status}`);
     } catch (e) {
       const msg = (e as Error).message;
       setError(msg);
       addLog(`✗ ${msg}`);
     }
   }
+
+  const handleUpdateBadge = async (increment: number) => {
+    const newCount = Math.max(0, badgeCount + increment);
+    setBadgeCount(newCount);
+    addLog(`→ invoke('set_badge_count', ${newCount})`);
+    try {
+      await RustOS.setBadgeCount(newCount);
+      addLog(`✓ Badge updated: ${newCount}`);
+    } catch (e) {
+      addLog(`✗ ${(e as Error).message}`);
+    }
+  };
+
+  const toggleConfig = async (key: 'transparent' | 'always_on_top' | 'frameless' | 'kiosk') => {
+    try {
+      if (key === 'transparent') {
+        // Rust uses snake_case, JS UI expects it as passed
+        await RustWindow.setConfig({ transparent: !transparent });
+        setTransparent(!transparent);
+      } else if (key === 'always_on_top') {
+        await RustWindow.setConfig({ always_on_top: !alwaysOnTop });
+        setAlwaysOnTop(!alwaysOnTop);
+      } else if (key === 'frameless') {
+        await RustWindow.setConfig({ frameless: !frameless });
+        setFrameless(!frameless);
+      } else if (key === 'kiosk') {
+        await RustWindow.setConfig({ kiosk: !kiosk });
+        setKiosk(!kiosk);
+      }
+      addLog(`✓ Toggled ${key}`);
+    } catch (e) {
+      addLog(`✗ ${(e as Error).message}`);
+    }
+  };
 
 
   const handleShowDialog = async (level: ShowMessageDialogRequest['level']) => {
@@ -252,6 +293,31 @@ function App() {
             style={{ width: '100%', height: '100px', background: '#1a1a2e', color: '#fff', padding: '8px', borderRadius: '4px', border: '1px solid #333' }}
             placeholder="File content..."
           />
+        </div>
+
+        {/* OS Integration & Window Settings */}
+        <div style={{ padding: '20px', borderTop: '1px solid #333', marginTop: '20px' }}>
+          <h3>Window Modes & OS Badges</h3>
+          <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', marginBottom: '10px' }}>
+            <button onClick={() => toggleConfig('frameless')}>
+              {frameless ? 'Restore Frame' : 'Make Frameless'}
+            </button>
+            <button onClick={() => toggleConfig('transparent')}>
+              {transparent ? 'Disable Transparent' : 'Make Transparent'}
+            </button>
+            <button onClick={() => toggleConfig('always_on_top')}>
+              {alwaysOnTop ? 'Disable Always on Top' : 'Always on Top'}
+            </button>
+            <button onClick={() => toggleConfig('kiosk')}>
+              {kiosk ? 'Exit Kiosk' : 'Kiosk Mode'}
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', marginBottom: '10px' }}>
+            <span>Badge Count: {badgeCount}</span>
+            <button onClick={() => handleUpdateBadge(-1)}>-1</button>
+            <button onClick={() => handleUpdateBadge(1)}>+1</button>
+            <button onClick={() => handleUpdateBadge(-badgeCount)}>Clear</button>
+          </div>
         </div>
 
         <div style={{

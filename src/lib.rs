@@ -29,6 +29,7 @@ pub mod tray;
 pub mod menus;
 pub mod debug_logger;
 pub mod window_manager;
+pub mod config;
 
 use client::{IcyClient, client::ClientBuilder};
 use app::AppBuilder;
@@ -45,6 +46,11 @@ pub struct WindowConfig {
     pub height: f64,
     pub resizable: bool,
     pub start_hidden: bool,
+    pub frameless: Option<bool>,
+    pub transparent: Option<bool>,
+    pub always_on_top: Option<bool>,
+    pub kiosk: Option<bool>,
+    pub icon: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone)]
@@ -52,6 +58,11 @@ pub enum AppEvent {
     ContentLoaded,
     CreateWindow(WindowConfig),
     ScheduleMessagePumpWork(i64),
+    SetDecorations(Option<usize>, bool),
+    SetAlwaysOnTop(Option<usize>, bool),
+    SetWindowIcon(Option<usize>, Option<winit::window::Icon>),
+    SetKiosk(Option<usize>, bool),
+    SetTrayBadge(u32),
 }
 
 use std::sync::OnceLock;
@@ -405,15 +416,32 @@ impl App {
         let _ = EVENT_LOOP_PROXY.set(std::sync::Mutex::new(proxy.clone()));
         
         let mut window_manager = WindowManager::new();
+        let mut config_manager = config::ConfigManager::new();
+        let workspace_config = config::WorkspaceConfig::load();
+        
+        if let Some(badges) = &workspace_config.badges {
+            if let Some(taskbar_path) = &badges.taskbar {
+                crate::tray::set_tray_icon_path(taskbar_path.clone());
+            }
+        }
 
         print_debug("DEBUG: Creating main window");
-        let main_window = WindowBuilder::new()
+        
+        let mut main_window_builder = WindowBuilder::new()
             .with_title(&self.title)
-            .with_inner_size(winit::dpi::LogicalSize::new(self.width, self.height))
             .with_visible(!self.start_hidden)
-            .with_resizable(self.resizable)
-            .build(&event_loop)
-            .unwrap();
+            .with_resizable(self.resizable);
+
+        if let Some(bounds) = &config_manager.current.main_window {
+            main_window_builder = main_window_builder
+                .with_inner_size(winit::dpi::LogicalSize::new(bounds.width, bounds.height))
+                .with_position(winit::dpi::LogicalPosition::new(bounds.x, bounds.y));
+        } else {
+            main_window_builder = main_window_builder
+                .with_inner_size(winit::dpi::LogicalSize::new(self.width, self.height));
+        }
+
+        let main_window = main_window_builder.build(&event_loop).unwrap();
 
         let main_window_id = window_manager.insert(main_window);
 
@@ -522,6 +550,38 @@ impl App {
             print_debug("DEBUG: Calling init_for_nsapp()");
             app_menu_handles.menu.init_for_nsapp();
             print_debug("DEBUG: Menu initialized for NSApp");
+            
+            if let Some(badges) = &workspace_config.badges {
+                if let Some(dock_path) = &badges.dock {
+                    use objc::{class, msg_send, sel, sel_impl};
+                    use objc::runtime::Object;
+                    use std::ffi::CString;
+                    
+                    print_debug(&format!("DEBUG: Setting macOS Dock icon from: {}", dock_path));
+                    
+                    let c_path = CString::new(dock_path.clone()).unwrap_or_default();
+                    #[allow(unexpected_cfgs)]
+                    unsafe {
+                        let ns_string_class = class!(NSString);
+                        let ns_path: *mut Object = msg_send![ns_string_class, alloc];
+                        let ns_path: *mut Object = msg_send![ns_path, initWithUTF8String: c_path.as_ptr()];
+                        
+                        let ns_image_class = class!(NSImage);
+                        let ns_image: *mut Object = msg_send![ns_image_class, alloc];
+                        let ns_image: *mut Object = msg_send![ns_image, initWithContentsOfFile: ns_path];
+                        
+                        if !ns_image.is_null() {
+                            let ns_app_class = class!(NSApplication);
+                            let app: *mut Object = msg_send![ns_app_class, sharedApplication];
+                            let _: () = msg_send![app, setActivationPolicy:0isize];
+                            let _: () = msg_send![app, setApplicationIconImage: ns_image];
+                            print_debug("DEBUG: Successfully set macOS Dock icon");
+                        } else {
+                            print_debug("DEBUG: Failed to load macOS Dock icon, NSImage was null");
+                        }
+                    }
+                }
+            }
         }
         
         let mut browser_settings = cef::BrowserSettings::default();
@@ -669,13 +729,16 @@ impl App {
         print_debug("========================================");
         let mut counter = 0;
         let mut next_cef_pump_time: Option<std::time::Instant> = Some(std::time::Instant::now());
+        
+        // We will mutate the tray icon's inner state if needed, but tray_icon::TrayIcon typically takes &self for set_icon.
+        // We still need to own it or keep it alive. We'll shadow it.
+        let tray_icon = _tray_icon;
 
         let _ = event_loop.run(move |event, window_target| {
             // KEEP HANDLES ALIVE: Move them into the closure
             let _ = &app_menu_handles; 
             let _ = &tray_menu;
-            let _ = &_tray_icon;
-
+            let _ = &tray_icon;
 
             match event {
                 Event::UserEvent(AppEvent::ScheduleMessagePumpWork(delay_ms)) => {
@@ -703,13 +766,37 @@ impl App {
                 }
                 Event::UserEvent(AppEvent::CreateWindow(config)) => {
                     print_info(&format!("Received CreateWindow request: {}", config.url));
-                    let new_window = WindowBuilder::new()
+                    let mut builder = WindowBuilder::new()
                         .with_title(&config.title)
                         .with_inner_size(winit::dpi::LogicalSize::new(config.width, config.height))
                         .with_visible(!config.start_hidden)
-                        .with_resizable(config.resizable)
-                        .build(window_target)
-                        .unwrap();
+                        .with_resizable(config.resizable);
+                        
+                    if let Some(frameless) = config.frameless {
+                        builder = builder.with_decorations(!frameless);
+                    }
+                    if let Some(transparent) = config.transparent {
+                        builder = builder.with_transparent(transparent);
+                    }
+                    if let Some(always_on_top) = config.always_on_top {
+                        builder = builder.with_window_level(if always_on_top { WindowLevel::AlwaysOnTop } else { WindowLevel::Normal });
+                    }
+                    if let Some(kiosk) = config.kiosk {
+                        if kiosk {
+                            builder = builder.with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+                        }
+                    }
+                    if let Some(icon_bytes) = &config.icon {
+                        if let Ok(img) = image::load_from_memory(icon_bytes) {
+                            let rgba = img.into_rgba8();
+                            let (width, height) = rgba.dimensions();
+                            if let Ok(icon) = winit::window::Icon::from_rgba(rgba.into_raw(), width, height) {
+                                builder = builder.with_window_icon(Some(icon));
+                            }
+                        }
+                    }
+
+                    let new_window = builder.build(window_target).unwrap();
 
                     let new_id = window_manager.insert(new_window);
 
@@ -763,22 +850,87 @@ impl App {
                          }
                     }
                 }
+                Event::UserEvent(AppEvent::SetDecorations(id_opt, show)) => {
+                    let target_id = id_opt.unwrap_or(main_window_id);
+                    if let Some(managed) = window_manager.get(target_id) {
+                        managed.window.set_decorations(show);
+                    }
+                }
+                Event::UserEvent(AppEvent::SetAlwaysOnTop(id_opt, always_on_top)) => {
+                    let target_id = id_opt.unwrap_or(main_window_id);
+                    if let Some(managed) = window_manager.get(target_id) {
+                        managed.window.set_window_level(if always_on_top { WindowLevel::AlwaysOnTop } else { WindowLevel::Normal });
+                    }
+                }
+                Event::UserEvent(AppEvent::SetWindowIcon(id_opt, icon_opt)) => {
+                    let target_id = id_opt.unwrap_or(main_window_id);
+                    if let Some(managed) = window_manager.get(target_id) {
+                        managed.window.set_window_icon(icon_opt);
+                    }
+                }
+                Event::UserEvent(AppEvent::SetKiosk(id_opt, is_kiosk)) => {
+                    let target_id = id_opt.unwrap_or(main_window_id);
+                    if let Some(managed) = window_manager.get(target_id) {
+                        if is_kiosk {
+                            managed.window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+                        } else {
+                            managed.window.set_fullscreen(None);
+                        }
+                    }
+                }
+                Event::UserEvent(AppEvent::SetTrayBadge(count)) => {
+                    let icon = crate::tray::generate_tray_icon_with_badge(if count > 0 { Some(count) } else { None });
+                    let _ = tray_icon.set_icon(Some(icon));
+                }
                 Event::WindowEvent {
                     window_id,
-                    event: WindowEvent::Resized(_),
+                    event: WindowEvent::Moved(position),
                     ..
                 } => {
-                    // Match window_id against our managed windows
-                    for managed in window_manager.values() {
+                     let mut log_bounds = None;
+                     for (id, managed) in window_manager.windows_iter() {
                          if managed.window.id() == window_id {
-                              if let Some(browser) = &managed.browser {
-                                  if let Some(host) = browser.host() {
-                                      host.was_resized();
-                                  }
+                              if *id == main_window_id {
+                                   let log_pos = position.to_logical::<i32>(managed.window.scale_factor());
+                                   let log_size = managed.window.inner_size().to_logical::<u32>(managed.window.scale_factor());
+                                   log_bounds = Some((log_pos.x, log_pos.y, log_size.width, log_size.height));
                               }
                               break;
                          }
-                    }
+                     }
+                     if let Some((x, y, w, h)) = log_bounds {
+                         config_manager.update_main_window_bounds(x, y, w, h);
+                     }
+                }
+                Event::WindowEvent {
+                    window_id,
+                    event: WindowEvent::Resized(size),
+                    ..
+                } => {
+                     let mut log_bounds = None;
+                     // Match window_id against our managed windows
+                     for (id, managed) in window_manager.windows_iter() {
+                          if managed.window.id() == window_id {
+                               if *id == main_window_id {
+                                    if let Ok(pos) = managed.window.outer_position() {
+                                        let log_pos = pos.to_logical::<i32>(managed.window.scale_factor());
+                                        let log_size = size.to_logical::<u32>(managed.window.scale_factor());
+                                        log_bounds = Some((log_pos.x, log_pos.y, log_size.width, log_size.height));
+                                    }
+                               }
+                               
+                               if let Some(browser) = &managed.browser {
+                                   if let Some(host) = browser.host() {
+                                       host.was_resized();
+                                   }
+                               }
+                               break;
+                          }
+                     }
+                     
+                     if let Some((x, y, w, h)) = log_bounds {
+                         config_manager.update_main_window_bounds(x, y, w, h);
+                     }
                 }
                 Event::WindowEvent {
                     window_id,
@@ -844,6 +996,8 @@ impl App {
                          print_debug("DEBUG: Executing on_exit callback");
                          callback();
                      }
+                     
+                     config_manager.save();
 
                      print_debug("DEBUG: Event loop exiting, shutting down CEF");
                      cef::shutdown();

@@ -118,10 +118,37 @@ export interface WindowOptions {
     width?: number;
     height?: number;
     resizable?: boolean;
+    frameless?: boolean;
+    transparent?: boolean;
+    always_on_top?: boolean;
+    kiosk?: boolean;
+    icon?: string; // base64 encoded png
+}
+
+export interface WindowConfigOptions {
+    frameless?: boolean;
+    transparent?: boolean;
+    always_on_top?: boolean;
+    kiosk?: boolean;
+    icon?: string; // base64 encoded png
 }
 
 export class RustWindow {
     static async create(options: WindowOptions = {}): Promise<{ status: string, url: string }> {
         return invoke<{ status: string, url: string }>('create_window', options as Record<string, unknown>);
+    }
+
+    static async setConfig(options: WindowConfigOptions): Promise<{ status: string }> {
+        return invoke<{ status: string }>('set_window_config', options as Record<string, unknown>);
+    }
+}
+
+export class RustOS {
+    /**
+     * Set the badge count on the macOS Dock and System Tray.
+     * Pass 0 to clear the badge.
+     */
+    static async setBadgeCount(count: number): Promise<{ status: string, count: number }> {
+        return invoke<{ status: string, count: number }>('set_badge_count', { count });
     }
 }

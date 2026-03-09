@@ -562,14 +562,14 @@ Match Electron's feature set for professional desktop applications. Add advanced
 
 | Feature | Description | Rust Implementation | Priority |
 |---------|-------------|---------------------|----------|
-| Multiple Windows | Create/manage child windows | CEF BrowserHost | High |
-| Window State Persistence | Save/restore position & size | `serde` + config file | High |
-| Frameless Windows | Custom title bar, no borders | Winit `with_decorations(false)` | Medium |
-| Transparent Windows | See-through background | Winit `with_transparent(true)` | Medium |
-| Always On Top | Pin window above others | Winit `set_always_on_top()` | Low |
-| Window Badges (macOS) | Dock icon badge count | Platform-specific API | Low |
-| Progress Bar (Taskbar) | Windows taskbar progress | `windows-taskbar` crate | Medium |
-| Kiosk Mode | Fullscreen lock | Winit + keyboard blocking | Low |
+| Multiple Windows | Create/manage secondary browser windows natively | `WindowBuilder::new()` + `winit` event loop management | ✅ Done |
+| Window State | Save/restore window position and size | Local JSON config (`dirs` crate) on window move/close | ✅ Done |
+| Window Modes | Frameless, Transparent, Always on Top, Kiosk | `WindowBuilder` configuration flags (`winit`) | ✅ Done |
+| OS Integration | macOS Dock badges, Windows taskbar progress | `objc` for macOS NSApp.dockTile, native tray updates | ✅ Done |
+| Always On Top | Pin window above others | Winit `set_always_on_top()` | ✅ Done |
+| Window Badges (macOS) | Dock icon badge count | Platform-specific API (`objc`) | ✅ Done |
+| Progress Bar (Taskbar) | Windows taskbar progress | N/A (Omitted) | ⏩ Skipped |
+| Kiosk Mode | Fullscreen lock | Winit `set_fullscreen()` | ✅ Done |
 
 **Time Estimate:** 1-2 weeks
 
