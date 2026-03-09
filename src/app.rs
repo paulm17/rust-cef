@@ -182,6 +182,14 @@ impl ImplBrowserProcessHandler for AppBuilder {
             Some(&mut crate::platform::scheme_handler::AppSchemeHandlerFactory::new(self.resolver.clone())),
         );
     }
+
+    fn on_schedule_message_pump_work(&self, delay_ms: i64) {
+        if let Some(proxy_mutex) = crate::EVENT_LOOP_PROXY.get() {
+            if let Ok(proxy) = proxy_mutex.lock() {
+                let _ = proxy.send_event(crate::AppEvent::ScheduleMessagePumpWork(delay_ms));
+            }
+        }
+    }
 }
 
 impl WrapBrowserProcessHandler for AppBuilder {

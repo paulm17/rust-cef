@@ -51,7 +51,11 @@ pub struct WindowConfig {
 pub enum AppEvent {
     ContentLoaded,
     CreateWindow(WindowConfig),
+    ScheduleMessagePumpWork(i64),
 }
+
+use std::sync::OnceLock;
+pub static EVENT_LOOP_PROXY: OnceLock<std::sync::Mutex<winit::event_loop::EventLoopProxy<AppEvent>>> = OnceLock::new();
 
 /// Configuration for the Development Environment
 #[derive(Clone)]
@@ -398,6 +402,7 @@ impl App {
 
         let proxy = event_loop.create_proxy();
         router.set_proxy(proxy.clone());
+        let _ = EVENT_LOOP_PROXY.set(std::sync::Mutex::new(proxy.clone()));
         
         let mut window_manager = WindowManager::new();
 
@@ -663,6 +668,8 @@ impl App {
         print_debug("DEBUG: ENTERING EVENT LOOP");
         print_debug("========================================");
         let mut counter = 0;
+        let mut next_cef_pump_time: Option<std::time::Instant> = Some(std::time::Instant::now());
+
         let _ = event_loop.run(move |event, window_target| {
             // KEEP HANDLES ALIVE: Move them into the closure
             let _ = &app_menu_handles; 
@@ -670,9 +677,14 @@ impl App {
             let _ = &_tray_icon;
 
 
-            window_target.set_control_flow(ControlFlow::Poll);
-
             match event {
+                Event::UserEvent(AppEvent::ScheduleMessagePumpWork(delay_ms)) => {
+                    if delay_ms <= 0 {
+                        next_cef_pump_time = Some(std::time::Instant::now());
+                    } else {
+                        next_cef_pump_time = Some(std::time::Instant::now() + std::time::Duration::from_millis(delay_ms as u64));
+                    }
+                }
                 // Handle ContentLoaded event: Show window only when content is ready
                 Event::UserEvent(AppEvent::ContentLoaded) => {
                      print_info("ContentLoaded event received. Showing window.");
@@ -921,8 +933,31 @@ impl App {
                          // eprintln!("DEBUG: Tray event: {:?}", event);
                     }
 
-                    // log_debug("DEBUG: Loop tick"); // Too noisy
-                    cef::do_message_loop_work();
+                    // Pump CEF message loop if it's time
+                    let now = std::time::Instant::now();
+                    let mut pumped = false;
+                    if let Some(target) = next_cef_pump_time {
+                        if now >= target {
+                            cef::do_message_loop_work();
+                            pumped = true;
+                        }
+                    }
+
+                    // Schedule next wake up for winit
+                    if pumped {
+                        // We pumped, wait for CEF to schedule the next pump via on_schedule_message_pump_work
+                        // But also make sure we don't completely freeze if CEF misses a cycle, max 50ms wait.
+                        window_target.set_control_flow(ControlFlow::WaitUntil(
+                            std::time::Instant::now() + std::time::Duration::from_millis(50)
+                        ));
+                    } else if let Some(target) = next_cef_pump_time {
+                        window_target.set_control_flow(ControlFlow::WaitUntil(target));
+                    } else {
+                        // CEF hasn't scheduled anything (Wait), but realistically we always set a safety net.
+                        window_target.set_control_flow(ControlFlow::WaitUntil(
+                            std::time::Instant::now() + std::time::Duration::from_millis(50)  
+                        ));
+                    }
                 }
                 _ => (),
             }
