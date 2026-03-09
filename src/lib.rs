@@ -28,16 +28,29 @@ pub mod assets;
 pub mod tray;
 pub mod menus;
 pub mod debug_logger;
+pub mod window_manager;
 
 use client::{IcyClient, client::ClientBuilder};
 use app::AppBuilder;
 use ipc::bridge::CommandRouter;
 use platform::scheme_handler::AssetResolver;
 use debug_logger::{log_debug, print_debug, print_info, set_debug_mode};
+use window_manager::WindowManager;
+
+#[derive(Debug, Clone)]
+pub struct WindowConfig {
+    pub url: String,
+    pub title: String,
+    pub width: f64,
+    pub height: f64,
+    pub resizable: bool,
+    pub start_hidden: bool,
+}
 
 #[derive(Debug, Clone)]
 pub enum AppEvent {
     ContentLoaded,
+    CreateWindow(WindowConfig),
 }
 
 /// Configuration for the Development Environment
@@ -163,7 +176,7 @@ impl App {
     where
         F: Fn(&serde_json::Value) -> Result<serde_json::Value, String> + Send + Sync + 'static,
     {
-        self.router.register(command, handler);
+        self.router.register(command, move |args, _proxy| handler(args));
         self
     }
 
@@ -384,9 +397,12 @@ impl App {
         let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build().unwrap();
 
         let proxy = event_loop.create_proxy();
+        router.set_proxy(proxy.clone());
         
-        print_debug("DEBUG: Creating window");
-        let window = WindowBuilder::new()
+        let mut window_manager = WindowManager::new();
+
+        print_debug("DEBUG: Creating main window");
+        let main_window = WindowBuilder::new()
             .with_title(&self.title)
             .with_inner_size(winit::dpi::LogicalSize::new(self.width, self.height))
             .with_visible(!self.start_hidden)
@@ -394,7 +410,7 @@ impl App {
             .build(&event_loop)
             .unwrap();
 
-        // window.set_visible(true); // Handled by builder now
+        let main_window_id = window_manager.insert(main_window);
 
         let _runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -520,38 +536,42 @@ impl App {
         let window_info = {
             let mut info = cef::WindowInfo::default();
             
-           #[cfg(target_os = "macos")]
+            #[cfg(target_os = "macos")]
             {
                 print_debug("DEBUG: Configuring window for macOS");
-                if let Ok(handle) = window.window_handle() {
-                    if let RawWindowHandle::AppKit(appkit_handle) = handle.as_raw() {
-                        let view = appkit_handle.ns_view.as_ptr() as *mut std::ffi::c_void;
-                        print_debug(&format!("DEBUG: Got AppKit view: {:?}", view));
+                if let Some(managed) = window_manager.get(main_window_id) {
+                    if let Ok(handle) = managed.window.window_handle() {
+                        if let RawWindowHandle::AppKit(appkit_handle) = handle.as_raw() {
+                            let view = appkit_handle.ns_view.as_ptr() as *mut std::ffi::c_void;
+                            print_debug(&format!("DEBUG: Got AppKit view: {:?}", view));
 
-                        let bounds = cef::Rect {
-                            x: 0,
-                            y: 0,
-                            width: window.inner_size().width as i32,
-                            height: window.inner_size().height as i32,
-                        };
-                        print_debug(&format!("DEBUG: Window bounds: {:?}", bounds));
+                            let bounds = cef::Rect {
+                                x: 0,
+                                y: 0,
+                                width: managed.window.inner_size().width as i32,
+                                height: managed.window.inner_size().height as i32,
+                            };
+                            print_debug(&format!("DEBUG: Window bounds: {:?}", bounds));
 
-                        info = info.set_as_child(view as _, &bounds);
+                            info = info.set_as_child(view as _, &bounds);
+                        }
                     }
                 }
             }
 
-            let size = window.inner_size();
-            info.bounds.width = size.width as i32;
-            info.bounds.height = size.height as i32;
-            info.bounds.x = 0;
-            info.bounds.y = 0;
-            
-            #[cfg(target_os = "windows")]
-            {
-                if let Ok(handle) = window.window_handle() {
-                    if let RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
-                        info.parent_window = win32_handle.hwnd.get() as _;
+            if let Some(managed) = window_manager.get(main_window_id) {
+                let size = managed.window.inner_size();
+                info.bounds.width = size.width as i32;
+                info.bounds.height = size.height as i32;
+                info.bounds.x = 0;
+                info.bounds.y = 0;
+                
+                #[cfg(target_os = "windows")]
+                {
+                    if let Ok(handle) = managed.window.window_handle() {
+                        if let RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
+                            info.parent_window = win32_handle.hwnd.get() as _;
+                        }
                     }
                 }
             }
@@ -571,6 +591,10 @@ impl App {
         if browser.is_none() {
            panic!("Browser creation failed!");
         }
+        
+        if let Some(b) = &browser {
+             window_manager.attach_browser(main_window_id, b.clone());
+        }
 
         print_debug("DEBUG: ✓ Browser created successfully");
         tracing::info!("Browser created");
@@ -578,10 +602,12 @@ impl App {
 
         // Force initial resize
         print_debug("DEBUG: Forcing initial resize");
-        if let Some(browser) = &browser {
-            if let Some(host) = browser.host() {
-                host.was_resized();
-                print_debug("DEBUG: Initial resize triggered");
+        if let Some(managed) = window_manager.get(main_window_id) {
+            if let Some(browser) = &managed.browser {
+                if let Some(host) = browser.host() {
+                    host.was_resized();
+                    print_debug("DEBUG: Initial resize triggered");
+                }
             }
         }
 
@@ -652,36 +678,132 @@ impl App {
                      print_info("ContentLoaded event received. Showing window.");
                      // Now trigger the on_ready callback (which shows window)
                      if let Some(callback) = &on_ready_callback {
-                         if !window.is_visible().unwrap_or(false) {
-                             let handle = AppHandle {
-                                 window: &window,
-                                 browser: browser.as_ref(),
-                             };
-                             callback(&handle);
+                         if let Some(managed) = window_manager.get(main_window_id) {
+                             if !managed.window.is_visible().unwrap_or(false) {
+                                  let handle = AppHandle {
+                                      window: &managed.window,
+                                      browser: managed.browser.as_ref(),
+                                  };
+                                  callback(&handle);
+                             }
                          }
                      }
                 }
-                Event::WindowEvent {
-                    event: WindowEvent::Resized(_),
-                    ..
-                } => {
-                    if let Some(browser) = &browser {
-                        if let Some(host) = browser.host() {
-                            host.was_resized();
+                Event::UserEvent(AppEvent::CreateWindow(config)) => {
+                    print_info(&format!("Received CreateWindow request: {}", config.url));
+                    let new_window = WindowBuilder::new()
+                        .with_title(&config.title)
+                        .with_inner_size(winit::dpi::LogicalSize::new(config.width, config.height))
+                        .with_visible(!config.start_hidden)
+                        .with_resizable(config.resizable)
+                        .build(window_target)
+                        .unwrap();
+
+                    let new_id = window_manager.insert(new_window);
+
+                    let mut info = cef::WindowInfo::default();
+                    
+                    if let Some(managed) = window_manager.get(new_id) {
+                        #[cfg(target_os = "macos")]
+                        if let Ok(handle) = managed.window.window_handle() {
+                            if let RawWindowHandle::AppKit(appkit_handle) = handle.as_raw() {
+                                let view = appkit_handle.ns_view.as_ptr() as *mut std::ffi::c_void;
+                                let bounds = cef::Rect {
+                                    x: 0,
+                                    y: 0,
+                                    width: managed.window.inner_size().width as i32,
+                                    height: managed.window.inner_size().height as i32,
+                                };
+                                info = info.set_as_child(view as _, &bounds);
+                            }
                         }
+
+                        let size = managed.window.inner_size();
+                        info.bounds.width = size.width as i32;
+                        info.bounds.height = size.height as i32;
+                        
+                        #[cfg(target_os = "windows")]
+                        if let Ok(handle) = managed.window.window_handle() {
+                            if let RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
+                                info.parent_window = win32_handle.hwnd.get() as _;
+                            }
+                        }
+                    }
+
+                    // Create the backend client handler for this new browser instance
+                    // Note: Ideally we'd reuse the same IcyClient proxy setup
+                    let (_new_client, new_client_handlers) = IcyClient::new(router.clone(), Some(proxy.clone()));
+                    let mut new_client_handler = ClientBuilder::build(new_client_handlers);
+
+                    let new_browser = cef::browser_host_create_browser_sync(
+                        Some(&info),
+                        Some(&mut new_client_handler),
+                        Some(&cef::CefString::from(config.url.as_str())),
+                        Some(&browser_settings),
+                        None,
+                        None,
+                    );
+
+                    if let Some(b) = new_browser {
+                         window_manager.attach_browser(new_id, b.clone());
+                         if let Some(host) = b.host() {
+                              host.was_resized();
+                         }
                     }
                 }
                 Event::WindowEvent {
+                    window_id,
+                    event: WindowEvent::Resized(_),
+                    ..
+                } => {
+                    // Match window_id against our managed windows
+                    for managed in window_manager.values() {
+                         if managed.window.id() == window_id {
+                              if let Some(browser) = &managed.browser {
+                                  if let Some(host) = browser.host() {
+                                      host.was_resized();
+                                  }
+                              }
+                              break;
+                         }
+                    }
+                }
+                Event::WindowEvent {
+                    window_id,
                     event: WindowEvent::CloseRequested,
                     ..
                 } => {
-                    // In Dev mode, we want to exit fully to kill the dev server
-                    if dev_flag {
-                         window_target.exit();
-                    } else {
-                        // Hiding the window instead of exiting
-                        // Only "Quit" from the tray menu should exit the application
-                        window.set_visible(false);
+                    // Check if this is the main window
+                    let mut is_main = false;
+
+                    let mut found_id = None;
+                    for (id, managed) in window_manager.windows_iter() {
+                        if managed.window.id() == window_id {
+                             found_id = Some(*id);
+                             if *id == main_window_id {
+                                 is_main = true;
+                             }
+                             break;
+                        }
+                    }
+
+                    if is_main {
+                        if dev_flag {
+                             window_target.exit();
+                        } else {
+                            if let Some(managed) = window_manager.get(main_window_id) {
+                                managed.window.set_visible(false);
+                            }
+                        }
+                    } else if let Some(id) = found_id {
+                        // Close secondary window
+                        if let Some(managed) = window_manager.remove(id) {
+                            if let Some(browser) = managed.browser {
+                                if let Some(host) = browser.host() {
+                                    host.close_browser(1);
+                                }
+                            }
+                        }
                     }
                 }
                 Event::LoopExiting => {
@@ -722,12 +844,14 @@ impl App {
                         if id == muda::MenuId::new(tray::MENU_ITEM_QUIT_ID) {
                             window_target.exit();
                         } else if id == muda::MenuId::new(tray::MENU_ITEM_SHOW_HIDE_ID) {
-                             if window.is_visible().unwrap_or(false) {
-                                window.set_visible(false);
-                             } else {
-                                window.set_visible(true);
-                                window.focus_window();
-                             }
+                            if let Some(managed) = window_manager.get(main_window_id) {
+                                 if managed.window.is_visible().unwrap_or(false) {
+                                    managed.window.set_visible(false);
+                                 } else {
+                                    managed.window.set_visible(true);
+                                    managed.window.focus_window();
+                                 }
+                            }
                         } 
                         // View Menu Actions
                         else if id == muda::MenuId::new(menus::MENU_VIEW_RELOAD) {
@@ -751,11 +875,13 @@ impl App {
                         }
                         // Always on Top
                         else if id == muda::MenuId::new(menus::MENU_WINDOW_ALWAYS_ON_TOP) {
-                             let current = app_menu_handles.window_always_on_top_item.is_checked();
-                             let new_state = !current;
-                             window.set_window_level(if new_state { WindowLevel::AlwaysOnTop } else { WindowLevel::Normal });
-                             app_menu_handles.window_always_on_top_item.set_checked(new_state);
-                             eprintln!("DEBUG: Always on Top toggled to {}", new_state);
+                             if let Some(managed) = window_manager.get(main_window_id) {
+                                 let current = app_menu_handles.window_always_on_top_item.is_checked();
+                                 let new_state = !current;
+                                 managed.window.set_window_level(if new_state { WindowLevel::AlwaysOnTop } else { WindowLevel::Normal });
+                                 app_menu_handles.window_always_on_top_item.set_checked(new_state);
+                                 eprintln!("DEBUG: Always on Top toggled to {}", new_state);
+                             }
                         } 
                         // Dialogs
                         else if id == muda::MenuId::new(menus::MENU_DIALOG_INFO) {

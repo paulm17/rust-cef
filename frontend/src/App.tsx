@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import reactLogo from './assets/react.svg'
 import viteLogo from '/vite.svg'
 import './App.css'
-import { invoke, RustFileSystem } from './rust-api'
+import { invoke, RustFileSystem, RustWindow } from './rust-api'
 import type { ShowMessageDialogRequest } from './types'
 
 interface AppInfo {
@@ -74,6 +74,22 @@ function App() {
     try {
       await invoke('nonexistent_command');
       addLog('✓ (unexpected success)');
+    } catch (e) {
+      const msg = (e as Error).message;
+      setError(msg);
+      addLog(`✗ ${msg}`);
+    }
+  }
+
+  const handleCreateWindow = async () => {
+    setError('');
+    addLog(`→ RustWindow.create()`);
+    try {
+      const result = await RustWindow.create({
+        url: 'data:text/html,<html><body style="background: %231a1a2e; color: white; display: flex; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif;"><h1>Hello Window</h1></body></html>',
+        title: `Secondary Window ${Date.now()}`
+      });
+      addLog(`✓ Result: ${result.status} - ${result.url}`);
     } catch (e) {
       const msg = (e as Error).message;
       setError(msg);
@@ -194,6 +210,7 @@ function App() {
           <button onClick={handleGreet}>Greet</button>
           <button onClick={handleAppInfo}>App Info</button>
           <button onClick={handleEcho}>Echo</button>
+          <button onClick={handleCreateWindow}>New Window</button>
           <button onClick={handleBadCommand} style={{ opacity: 0.7 }}>Bad Command</button>
         </div>
 

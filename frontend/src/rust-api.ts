@@ -111,3 +111,17 @@ export class RustFileSystem {
         return invoke<string[] | string | null>('show_pick_folder_dialog', options as Record<string, unknown>);
     }
 }
+
+export interface WindowOptions {
+    url?: string;
+    title?: string;
+    width?: number;
+    height?: number;
+    resizable?: boolean;
+}
+
+export class RustWindow {
+    static async create(options: WindowOptions = {}): Promise<{ status: string, url: string }> {
+        return invoke<{ status: string, url: string }>('create_window', options as Record<string, unknown>);
+    }
+}
