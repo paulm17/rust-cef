@@ -245,6 +245,8 @@ impl App {
                          print_debug(&format!("{} DEBUG: Resolved CWD for dev server: {:?}", log_prefix, absolute_cwd));
                          cmd.current_dir(cwd);
                      }
+                     // Disable Vite/Bun opening the default system browser
+                     cmd.env("BROWSER", "none");
                      
                      // Explicitly inherit stdout/stderr so we can see bun output
                      // Use piped output to avoid FD conflicts with CEF and to prefix logs
@@ -530,7 +532,7 @@ impl App {
         );
 
         if init_result != 1 {
-            panic!("CEF initialization failed!");
+            panic!("CEF initialization failed! This usually means another instance of the app is already running and holding a lock on the CEF cache directory. Please close all other instances and try again.");
         }
         print_info("CEF Library Started");
         tracing::info!("CEF initialized");
@@ -970,7 +972,7 @@ impl App {
                         }
                     }
                 }
-                Event::LoopExiting => {
+                    Event::LoopExiting => {
                      // Kill the dev process and its children (process group) FIRST
                      // This ensures that even if CEF shutdown crashes, we don't leave zombie processes
                      if let Some(mut child) = dev_process.take() {
@@ -983,7 +985,14 @@ impl App {
                              print_debug(&format!("DEBUG: Sending SIGTERM to PGID {}", pgid));
                              let ret = libc::kill(pgid, libc::SIGTERM);
                              if ret != 0 {
-                                 print_debug(&format!("DEBUG: Failed to kill process group: {}", std::io::Error::last_os_error()));
+                                 print_debug(&format!("DEBUG: Failed to send SIGTERM: {}", std::io::Error::last_os_error()));
+                             } else {
+                                 // Give the process group a brief moment to shut down gracefully
+                                 std::thread::sleep(std::time::Duration::from_millis(50));
+                                 
+                                 // Escalate to SIGKILL to ensure the process group is dead
+                                 print_debug(&format!("DEBUG: Escalating to SIGKILL to PGID {}", pgid));
+                                 let _ = libc::kill(pgid, libc::SIGKILL);
                              }
                          }
                              
