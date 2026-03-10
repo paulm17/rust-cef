@@ -44,6 +44,9 @@ pub struct WindowConfig {
     pub title: String,
     pub width: f64,
     pub height: f64,
+    pub x: Option<f64>,
+    pub y: Option<f64>,
+    pub persist_key: Option<String>,
     pub resizable: bool,
     pub start_hidden: bool,
     pub frameless: Option<bool>,
@@ -67,6 +70,21 @@ pub enum AppEvent {
 
 use std::sync::OnceLock;
 pub static EVENT_LOOP_PROXY: OnceLock<std::sync::Mutex<winit::event_loop::EventLoopProxy<AppEvent>>> = OnceLock::new();
+
+fn logical_window_bounds(window: &winit::window::Window) -> Option<config::WindowBounds> {
+    let position = window.outer_position().ok()?;
+    let logical_position = position.to_logical::<i32>(window.scale_factor());
+    let logical_size = window
+        .inner_size()
+        .to_logical::<u32>(window.scale_factor());
+
+    Some(config::WindowBounds {
+        x: logical_position.x,
+        y: logical_position.y,
+        width: logical_size.width,
+        height: logical_size.height,
+    })
+}
 
 /// Configuration for the Development Environment
 #[derive(Clone)]
@@ -445,7 +463,7 @@ impl App {
 
         let main_window = main_window_builder.build(&event_loop).unwrap();
 
-        let main_window_id = window_manager.insert(main_window);
+        let main_window_id = window_manager.insert(main_window, None);
 
         let _runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -768,11 +786,30 @@ impl App {
                 }
                 Event::UserEvent(AppEvent::CreateWindow(config)) => {
                     print_info(&format!("Received CreateWindow request: {}", config.url));
+                    let restored_bounds = config
+                        .persist_key
+                        .as_deref()
+                        .and_then(|key| config_manager.get_child_window_bounds(key))
+                        .cloned();
+                    let width = restored_bounds
+                        .as_ref()
+                        .map(|bounds| bounds.width as f64)
+                        .unwrap_or(config.width);
+                    let height = restored_bounds
+                        .as_ref()
+                        .map(|bounds| bounds.height as f64)
+                        .unwrap_or(config.height);
                     let mut builder = WindowBuilder::new()
                         .with_title(&config.title)
-                        .with_inner_size(winit::dpi::LogicalSize::new(config.width, config.height))
+                        .with_inner_size(winit::dpi::LogicalSize::new(width, height))
                         .with_visible(!config.start_hidden)
                         .with_resizable(config.resizable);
+
+                    if let Some(bounds) = &restored_bounds {
+                        builder = builder.with_position(winit::dpi::LogicalPosition::new(bounds.x, bounds.y));
+                    } else if let (Some(x), Some(y)) = (config.x, config.y) {
+                        builder = builder.with_position(winit::dpi::LogicalPosition::new(x, y));
+                    }
                         
                     if let Some(frameless) = config.frameless {
                         builder = builder.with_decorations(!frameless);
@@ -800,7 +837,7 @@ impl App {
 
                     let new_window = builder.build(window_target).unwrap();
 
-                    let new_id = window_manager.insert(new_window);
+                    let new_id = window_manager.insert(new_window, config.persist_key.clone());
 
                     let mut info = cef::WindowInfo::default();
                     
@@ -889,19 +926,48 @@ impl App {
                     event: WindowEvent::Moved(position),
                     ..
                 } => {
-                     let mut log_bounds = None;
+                     let mut main_bounds = None;
+                     let mut child_bounds = None;
                      for (id, managed) in window_manager.windows_iter() {
                          if managed.window.id() == window_id {
                               if *id == main_window_id {
                                    let log_pos = position.to_logical::<i32>(managed.window.scale_factor());
                                    let log_size = managed.window.inner_size().to_logical::<u32>(managed.window.scale_factor());
-                                   log_bounds = Some((log_pos.x, log_pos.y, log_size.width, log_size.height));
+                                   main_bounds = Some(config::WindowBounds {
+                                       x: log_pos.x,
+                                       y: log_pos.y,
+                                       width: log_size.width,
+                                       height: log_size.height,
+                                   });
+                              } else if let Some(persist_key) = &managed.persist_key {
+                                   let log_pos = position.to_logical::<i32>(managed.window.scale_factor());
+                                   let log_size = managed.window.inner_size().to_logical::<u32>(managed.window.scale_factor());
+                                   child_bounds = Some((
+                                       persist_key.clone(),
+                                       config::WindowBounds {
+                                           x: log_pos.x,
+                                           y: log_pos.y,
+                                           width: log_size.width,
+                                           height: log_size.height,
+                                       },
+                                   ));
                               }
                               break;
                          }
                      }
-                     if let Some((x, y, w, h)) = log_bounds {
-                         config_manager.update_main_window_bounds(x, y, w, h);
+                     if let Some(bounds) = main_bounds {
+                         config_manager.update_main_window_bounds(bounds.x, bounds.y, bounds.width, bounds.height);
+                         config_manager.save();
+                     }
+                     if let Some((persist_key, bounds)) = child_bounds {
+                         config_manager.update_child_window_bounds(
+                             persist_key,
+                             bounds.x,
+                             bounds.y,
+                             bounds.width,
+                             bounds.height,
+                         );
+                         config_manager.save();
                      }
                 }
                 Event::WindowEvent {
@@ -909,7 +975,8 @@ impl App {
                     event: WindowEvent::Resized(size),
                     ..
                 } => {
-                     let mut log_bounds = None;
+                     let mut main_bounds = None;
+                     let mut child_bounds = None;
                      // Match window_id against our managed windows
                      for (id, managed) in window_manager.windows_iter() {
                           if managed.window.id() == window_id {
@@ -917,7 +984,16 @@ impl App {
                                     if let Ok(pos) = managed.window.outer_position() {
                                         let log_pos = pos.to_logical::<i32>(managed.window.scale_factor());
                                         let log_size = size.to_logical::<u32>(managed.window.scale_factor());
-                                        log_bounds = Some((log_pos.x, log_pos.y, log_size.width, log_size.height));
+                                        main_bounds = Some(config::WindowBounds {
+                                            x: log_pos.x,
+                                            y: log_pos.y,
+                                            width: log_size.width,
+                                            height: log_size.height,
+                                        });
+                                    }
+                               } else if let Some(persist_key) = &managed.persist_key {
+                                    if let Some(bounds) = logical_window_bounds(&managed.window) {
+                                        child_bounds = Some((persist_key.clone(), bounds));
                                     }
                                }
                                
@@ -930,8 +1006,19 @@ impl App {
                           }
                      }
                      
-                     if let Some((x, y, w, h)) = log_bounds {
-                         config_manager.update_main_window_bounds(x, y, w, h);
+                     if let Some(bounds) = main_bounds {
+                         config_manager.update_main_window_bounds(bounds.x, bounds.y, bounds.width, bounds.height);
+                         config_manager.save();
+                     }
+                     if let Some((persist_key, bounds)) = child_bounds {
+                         config_manager.update_child_window_bounds(
+                             persist_key,
+                             bounds.x,
+                             bounds.y,
+                             bounds.width,
+                             bounds.height,
+                         );
+                         config_manager.save();
                      }
                 }
                 Event::WindowEvent {

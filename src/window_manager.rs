@@ -6,6 +6,7 @@ use winit::window::Window;
 pub struct ManagedWindow {
     pub window: Window,
     pub browser: Option<cef::Browser>,
+    pub persist_key: Option<String>,
 }
 
 pub struct WindowManager {
@@ -21,11 +22,12 @@ impl WindowManager {
         }
     }
 
-    pub fn insert(&mut self, window: Window) -> usize {
+    pub fn insert(&mut self, window: Window, persist_key: Option<String>) -> usize {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         self.windows.insert(id, ManagedWindow {
             window,
             browser: None,
+            persist_key,
         });
         id
     }

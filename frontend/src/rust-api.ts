@@ -117,6 +117,9 @@ export interface WindowOptions {
     title?: string;
     width?: number;
     height?: number;
+    x?: number;
+    y?: number;
+    persist_key?: string;
     resizable?: boolean;
     frameless?: boolean;
     transparent?: boolean;

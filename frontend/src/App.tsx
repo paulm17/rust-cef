@@ -90,13 +90,50 @@ function App() {
     setError('');
     addLog(`→ invoke('create_window')`);
     try {
+      const childWindowHtml = `
+        <html>
+          <body style="font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#242424;color:white;">
+            <h1>Hello Window!</h1>
+          </body>
+        </html>
+      `;
+
       const result = await RustWindow.create({
-        url: 'data:text/html,<html><body style="font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#242424;color:white;"><h1>Hello Window!</h1></body></html>',
+        url: `data:text/html;charset=utf-8,${encodeURIComponent(childWindowHtml)}`,
         title: `Secondary Window ${Date.now()}`,
         width: 600,
         height: 400
       });
       addLog(`✓ Window ${result.status}`);
+    } catch (e) {
+      const msg = (e as Error).message;
+      setError(msg);
+      addLog(`✗ ${msg}`);
+    }
+  }
+
+  const handleCreatePersistentWindow = async () => {
+    setError('');
+    addLog(`→ invoke('create_window', { persist_key: 'demo:persistent-window' })`);
+    try {
+      const childWindowHtml = `
+        <html>
+          <body style="font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#1f3a5f;color:white;">
+            <h1>Hello Persistent Window!</h1>
+          </body>
+        </html>
+      `;
+
+      const result = await RustWindow.create({
+        url: `data:text/html;charset=utf-8,${encodeURIComponent(childWindowHtml)}`,
+        title: 'Persistent Secondary Window',
+        width: 600,
+        height: 400,
+        x: 120,
+        y: 120,
+        persist_key: 'demo:persistent-window',
+      });
+      addLog(`✓ Persistent window ${result.status}`);
     } catch (e) {
       const msg = (e as Error).message;
       setError(msg);
@@ -251,7 +288,8 @@ function App() {
           <button onClick={handleGreet}>Greet</button>
           <button onClick={handleAppInfo}>App Info</button>
           <button onClick={handleEcho}>Echo</button>
-          <button onClick={handleCreateWindow}>New Window</button>
+      <button onClick={handleCreateWindow}>New Window</button>
+      <button onClick={handleCreatePersistentWindow}>New window (persistence)</button>
           <button onClick={handleBadCommand} style={{ opacity: 0.7 }}>Bad Command</button>
         </div>
 

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -11,8 +12,10 @@ pub struct WindowBounds {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct AppConfig {
     pub main_window: Option<WindowBounds>,
+    pub child_windows: HashMap<String, WindowBounds>,
 }
 
 pub struct ConfigManager {
@@ -57,6 +60,29 @@ impl ConfigManager {
             width,
             height,
         });
+    }
+
+    pub fn get_child_window_bounds(&self, key: &str) -> Option<&WindowBounds> {
+        self.current.child_windows.get(key)
+    }
+
+    pub fn update_child_window_bounds(
+        &mut self,
+        key: impl Into<String>,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+    ) {
+        self.current.child_windows.insert(
+            key.into(),
+            WindowBounds {
+                x,
+                y,
+                width,
+                height,
+            },
+        );
     }
 }
 

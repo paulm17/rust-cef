@@ -8,6 +8,9 @@ pub fn create_window(args: &Value, proxy: &Option<Arc<Mutex<EventLoopProxy<crate
     let title = args.get("title").and_then(|v| v.as_str()).unwrap_or("New Window").to_string();
     let width = args.get("width").and_then(|v| v.as_f64()).unwrap_or(800.0);
     let height = args.get("height").and_then(|v| v.as_f64()).unwrap_or(600.0);
+    let x = args.get("x").and_then(|v| v.as_f64());
+    let y = args.get("y").and_then(|v| v.as_f64());
+    let persist_key = args.get("persist_key").and_then(|v| v.as_str()).map(str::to_string);
     let resizable = args.get("resizable").and_then(|v| v.as_bool()).unwrap_or(true);
     let frameless = args.get("frameless").and_then(|v| v.as_bool());
     let transparent = args.get("transparent").and_then(|v| v.as_bool());
@@ -20,6 +23,9 @@ pub fn create_window(args: &Value, proxy: &Option<Arc<Mutex<EventLoopProxy<crate
          title,
          width,
          height,
+         x,
+         y,
+         persist_key,
          resizable,
          start_hidden: false,
          frameless,
