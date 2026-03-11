@@ -1,6 +1,6 @@
+use rfd::FileDialog;
 use serde::Deserialize;
 use serde_json::Value;
-use rfd::FileDialog;
 
 #[derive(Deserialize)]
 struct OpenDialogOptions {
@@ -19,11 +19,11 @@ struct SaveDialogOptions {
 }
 
 pub fn show_open_dialog(args: &Value) -> Result<Value, String> {
-    let options: OpenDialogOptions = serde_json::from_value(args.clone())
-        .map_err(|e| format!("Invalid options: {}", e))?;
+    let options: OpenDialogOptions =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid options: {}", e))?;
 
     let mut dialog = FileDialog::new();
-    
+
     if let Some(title) = options.title {
         dialog = dialog.set_title(&title);
     }
@@ -44,8 +44,8 @@ pub fn show_open_dialog(args: &Value) -> Result<Value, String> {
 }
 
 pub fn show_save_dialog(args: &Value) -> Result<Value, String> {
-    let options: SaveDialogOptions = serde_json::from_value(args.clone())
-        .map_err(|e| format!("Invalid options: {}", e))?;
+    let options: SaveDialogOptions =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid options: {}", e))?;
 
     let mut dialog = FileDialog::new();
 
@@ -67,11 +67,11 @@ pub fn show_save_dialog(args: &Value) -> Result<Value, String> {
 }
 
 pub fn show_pick_folder_dialog(args: &Value) -> Result<Value, String> {
-    let options: OpenDialogOptions = serde_json::from_value(args.clone())
-        .map_err(|e| format!("Invalid options: {}", e))?;
+    let options: OpenDialogOptions =
+        serde_json::from_value(args.clone()).map_err(|e| format!("Invalid options: {}", e))?;
 
     let mut dialog = FileDialog::new();
-    
+
     if let Some(title) = options.title {
         dialog = dialog.set_title(&title);
     }

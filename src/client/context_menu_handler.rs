@@ -1,8 +1,7 @@
 use cef;
 use cef::{
-    ContextMenuHandler, ImplContextMenuHandler, WrapContextMenuHandler,
     rc::{Rc, RcImpl},
-    sys, *,
+    sys, ContextMenuHandler, ImplContextMenuHandler, WrapContextMenuHandler, *,
 };
 use std::ptr::null_mut;
 
@@ -63,7 +62,7 @@ impl ImplContextMenuHandler for ContextMenuHandlerBuilder {
     fn get_raw(&self) -> *mut sys::_cef_context_menu_handler_t {
         self.object.cast()
     }
-    
+
     fn on_before_context_menu(
         &self,
         _browser: Option<&mut Browser>,

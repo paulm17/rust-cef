@@ -99,6 +99,20 @@ export class RustFileSystem {
         return invoke<FileMetadata>('get_metadata', { path });
     }
 
+    static async createFileStreamUrl(path: string): Promise<{
+        url: string;
+        path: string;
+        mime_type: string;
+        size: number;
+    }> {
+        return invoke<{
+            url: string;
+            path: string;
+            mime_type: string;
+            size: number;
+        }>('create_file_stream_url', { path });
+    }
+
     static async showOpenDialog(options: OpenDialogOptions = {}): Promise<string[] | string | null> {
         return invoke<string[] | string | null>('show_open_dialog', options as Record<string, unknown>);
     }
@@ -146,6 +160,30 @@ export class RustWindow {
     }
 }
 
+export interface PrintToPdfOptions {
+    path: string;
+    landscape?: boolean;
+    print_background?: boolean;
+    display_header_footer?: boolean;
+    scale?: number;
+}
+
+export interface StartDownloadOptions {
+    url: string;
+    path?: string;
+    show_dialog?: boolean;
+}
+
+export class RustBrowser {
+    static async printToPdf(options: PrintToPdfOptions): Promise<{ status: string; path: string }> {
+        return invoke<{ status: string; path: string }>('print_to_pdf', options as Record<string, unknown>);
+    }
+
+    static async startDownload(options: StartDownloadOptions): Promise<{ status: string; url: string }> {
+        return invoke<{ status: string; url: string }>('start_download', options as Record<string, unknown>);
+    }
+}
+
 export class RustOS {
     /**
      * Set the badge count on the macOS Dock and System Tray.
@@ -153,6 +191,76 @@ export class RustOS {
      */
     static async setBadgeCount(count: number): Promise<{ status: string, count: number }> {
         return invoke<{ status: string, count: number }>('set_badge_count', { count });
+    }
+
+    static async getLaunchContext(): Promise<{ deep_link: string | null; files: string[] }> {
+        return invoke<{ deep_link: string | null; files: string[] }>('get_launch_context');
+    }
+
+    static async showNotification(options: {
+        title: string;
+        body?: string;
+        subtitle?: string;
+        sound?: string;
+        app_icon?: string;
+        content_image?: string;
+        action?: string;
+        close_button?: string;
+        wait_for_click?: boolean;
+    }): Promise<{
+        status: string;
+        title: string;
+        body: string;
+        subtitle?: string;
+        sound?: string;
+        response?: { kind: string; value?: string };
+    }> {
+        return invoke<{
+            status: string;
+            title: string;
+            body: string;
+            subtitle?: string;
+            sound?: string;
+            response?: { kind: string; value?: string };
+        }>(
+            'show_notification',
+            options as Record<string, unknown>,
+        );
+    }
+
+    static async registerGlobalShortcut(id: string, accelerator: string): Promise<{
+        status: string;
+        id: string;
+        accelerator: string;
+    }> {
+        return invoke<{
+            status: string;
+            id: string;
+            accelerator: string;
+        }>('register_global_shortcut', { id, accelerator });
+    }
+
+    static async unregisterGlobalShortcut(id: string): Promise<{
+        status: string;
+        id: string;
+    }> {
+        return invoke<{ status: string; id: string }>('unregister_global_shortcut', { id });
+    }
+
+    static async listGlobalShortcuts(): Promise<Array<{ id: string; accelerator: string }>> {
+        return invoke<Array<{ id: string; accelerator: string }>>('list_global_shortcuts');
+    }
+
+    static async pollGlobalShortcutEvents(): Promise<Array<{
+        id: string;
+        accelerator: string;
+        state: 'pressed' | 'released';
+    }>> {
+        return invoke<Array<{
+            id: string;
+            accelerator: string;
+            state: 'pressed' | 'released';
+        }>>('poll_global_shortcut_events');
     }
 }
 

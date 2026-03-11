@@ -23,6 +23,13 @@ function App() {
   const [alwaysOnTop, setAlwaysOnTop] = useState(false)
   const [frameless, setFrameless] = useState(false)
   const [kiosk, setKiosk] = useState(false)
+  const [shortcutId, setShortcutId] = useState('demo-shortcut')
+  const [shortcutAccelerator, setShortcutAccelerator] = useState('CmdOrCtrl+Shift+Y')
+  const [notificationBody, setNotificationBody] = useState('Rich notification test from the demo app')
+  const [notificationImage, setNotificationImage] = useState('')
+  const [streamPath, setStreamPath] = useState('')
+  const [streamUrl, setStreamUrl] = useState('')
+  const [streamMimeType, setStreamMimeType] = useState('')
 
   const addLog = (msg: string) => setLogs(prev => [...prev, msg])
 
@@ -270,6 +277,97 @@ function App() {
     }
   }
 
+  const handleRegisterShortcut = async () => {
+    setError('');
+    addLog(`→ register_global_shortcut('${shortcutId}', '${shortcutAccelerator}')`);
+    try {
+      const result = await RustOS.registerGlobalShortcut(shortcutId, shortcutAccelerator);
+      addLog(`✓ Shortcut registered: ${result.accelerator}`);
+    } catch (e) {
+      const msg = (e as Error).message;
+      setError(msg);
+      addLog(`✗ ${msg}`);
+    }
+  }
+
+  const handleUnregisterShortcut = async () => {
+    setError('');
+    addLog(`→ unregister_global_shortcut('${shortcutId}')`);
+    try {
+      const result = await RustOS.unregisterGlobalShortcut(shortcutId);
+      addLog(`✓ Shortcut ${result.status}: ${result.id}`);
+    } catch (e) {
+      const msg = (e as Error).message;
+      setError(msg);
+      addLog(`✗ ${msg}`);
+    }
+  }
+
+  const handlePollShortcutEvents = async () => {
+    setError('');
+    addLog('→ poll_global_shortcut_events()');
+    try {
+      const events = await RustOS.pollGlobalShortcutEvents();
+      if (events.length === 0) {
+        addLog('• No shortcut events');
+      } else {
+        for (const event of events) {
+          addLog(`✓ Shortcut ${event.id}: ${event.state} (${event.accelerator})`);
+        }
+      }
+    } catch (e) {
+      const msg = (e as Error).message;
+      setError(msg);
+      addLog(`✗ ${msg}`);
+    }
+  }
+
+  const handleShowRichNotification = async () => {
+    setError('');
+    addLog('→ show_notification(rich)');
+    try {
+      const result = await RustOS.showNotification({
+        title: 'Rust CEF',
+        body: notificationBody,
+        subtitle: 'Rich notification test',
+        sound: 'default',
+        action: 'Open',
+        close_button: 'Dismiss',
+        wait_for_click: false,
+        content_image: notificationImage || undefined,
+      });
+      addLog(`✓ Notification shown: ${result.response?.kind ?? 'none'}`);
+    } catch (e) {
+      const msg = (e as Error).message;
+      setError(msg);
+      addLog(`✗ ${msg}`);
+    }
+  }
+
+  const handleCreateStreamUrl = async () => {
+    setError('');
+    addLog(`→ create_file_stream_url('${streamPath}')`);
+    try {
+      const result = await RustFileSystem.createFileStreamUrl(streamPath);
+      setStreamUrl(result.url);
+      setStreamMimeType(result.mime_type);
+      addLog(`✓ Stream URL created: ${result.mime_type}`);
+    } catch (e) {
+      const msg = (e as Error).message;
+      setError(msg);
+      addLog(`✗ ${msg}`);
+    }
+  }
+
+  const handleOpenStream = () => {
+    if (!streamUrl) {
+      addLog('• No stream URL to open');
+      return;
+    }
+    window.open(streamUrl, '_blank');
+    addLog(`✓ Opened stream URL`);
+  }
+
   return (
     <>
       <div>
@@ -355,6 +453,72 @@ function App() {
             <button onClick={() => handleUpdateBadge(-1)}>-1</button>
             <button onClick={() => handleUpdateBadge(1)}>+1</button>
             <button onClick={() => handleUpdateBadge(-badgeCount)}>Clear</button>
+          </div>
+        </div>
+
+        <div style={{ padding: '20px', borderTop: '1px solid #333', marginTop: '20px' }}>
+          <h3>Medium Feature Tests</h3>
+
+          <div style={{ textAlign: 'left', marginBottom: '12px' }}>
+            <div style={{ marginBottom: '6px' }}><strong>Global Shortcuts</strong></div>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+              <input
+                value={shortcutId}
+                onChange={(e) => setShortcutId(e.target.value)}
+                placeholder="Shortcut ID"
+                style={{ flex: '1 1 160px' }}
+              />
+              <input
+                value={shortcutAccelerator}
+                onChange={(e) => setShortcutAccelerator(e.target.value)}
+                placeholder="CmdOrCtrl+Shift+Y"
+                style={{ flex: '2 1 220px' }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button onClick={handleRegisterShortcut}>Register Shortcut</button>
+              <button onClick={handleUnregisterShortcut}>Unregister Shortcut</button>
+              <button onClick={handlePollShortcutEvents}>Poll Shortcut Events</button>
+            </div>
+          </div>
+
+          <div style={{ textAlign: 'left', marginBottom: '12px' }}>
+            <div style={{ marginBottom: '6px' }}><strong>Rich Notifications</strong></div>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+              <input
+                value={notificationBody}
+                onChange={(e) => setNotificationBody(e.target.value)}
+                placeholder="Notification body"
+                style={{ flex: '2 1 260px' }}
+              />
+              <input
+                value={notificationImage}
+                onChange={(e) => setNotificationImage(e.target.value)}
+                placeholder="Optional image path"
+                style={{ flex: '2 1 260px' }}
+              />
+            </div>
+            <button onClick={handleShowRichNotification}>Show Rich Notification</button>
+          </div>
+
+          <div style={{ textAlign: 'left' }}>
+            <div style={{ marginBottom: '6px' }}><strong>Streamed File URL</strong></div>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+              <input
+                value={streamPath}
+                onChange={(e) => setStreamPath(e.target.value)}
+                placeholder="/absolute/path/to/file"
+                style={{ flex: '3 1 360px' }}
+              />
+              <button onClick={handleCreateStreamUrl}>Create Stream URL</button>
+              <button onClick={handleOpenStream}>Open Stream URL</button>
+            </div>
+            {streamUrl && (
+              <div style={{ fontSize: '12px', color: '#888' }}>
+                <div>MIME: {streamMimeType}</div>
+                <div style={{ wordBreak: 'break-all' }}>{streamUrl}</div>
+              </div>
+            )}
           </div>
         </div>
 

@@ -1,13 +1,12 @@
+use crate::debug_logger::{print_debug, print_info};
+use crate::AppEvent;
 use cef;
 use cef::{
-    ImplLoadHandler, LoadHandler, WrapLoadHandler,
     rc::{Rc, RcImpl},
-    sys, *,
+    sys, ImplLoadHandler, LoadHandler, WrapLoadHandler, *,
 };
 use std::ptr::null_mut;
 use winit::event_loop::EventLoopProxy;
-use crate::AppEvent;
-use crate::debug_logger::{print_debug, print_info};
 
 #[derive(Clone)]
 pub struct IcyLoadHandler {
@@ -92,30 +91,34 @@ impl ImplLoadHandler for LoadHandlerBuilder {
         frame: Option<&mut Frame>,
         http_status_code: ::std::os::raw::c_int,
     ) {
-         if let Some(frame) = frame {
-             if frame.is_main() == 1 {
+        if let Some(frame) = frame {
+            if frame.is_main() == 1 {
                 // usage: CefStringUtf16::from(userfree).to_string()
                 let url_cef = frame.url();
                 let url_utf16 = cef::CefStringUtf16::from(&url_cef);
                 let url = String::from_utf16_lossy(url_utf16.as_slice().unwrap_or(&[]));
 
-
-
                 if !url.contains("rust_cef_loading.html") {
-                    print_info(&format!("Load end for URL: {} (Status: {})", url, http_status_code));
+                    print_info(&format!(
+                        "Load end for URL: {} (Status: {})",
+                        url, http_status_code
+                    ));
                 }
-                
+
                 // If this is a real content URL (not file:// loading screen or about:blank), show window
-                if (url.starts_with("http://") || url.starts_with("https://") || url.starts_with("scheme://")) 
-                   && !url.contains("google.com") // Ignore random stuff if any
+                if (url.starts_with("http://")
+                    || url.starts_with("https://")
+                    || url.starts_with("scheme://"))
+                    && !url.contains("google.com")
+                // Ignore random stuff if any
                 {
                     print_info("Main content loaded. Signaling event loop to show window.");
                     if let Some(proxy) = &self._load_handler.proxy {
                         let _ = proxy.send_event(AppEvent::ContentLoaded);
                     }
                 }
-             }
-         }
+            }
+        }
     }
 
     fn on_load_error(
@@ -134,13 +137,16 @@ impl ImplLoadHandler for LoadHandlerBuilder {
             .map(cef::CefStringUtf8::from)
             .and_then(|s| s.as_str().map(|s| s.to_string()))
             .unwrap_or_default();
-        
+
         tracing::error!(
             "Load error: code={}, text={}, url={}",
             *error_code.as_ref() as i32,
             error_text_str,
             failed_url_str
         );
-        print_debug(&format!("DEBUG: Load error for {}: {}", failed_url_str, error_text_str));
+        print_debug(&format!(
+            "DEBUG: Load error for {}: {}",
+            failed_url_str, error_text_str
+        ));
     }
 }

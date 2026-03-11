@@ -215,6 +215,30 @@ impl CommandRouter {
 
         // OS Integration
         self.register("set_badge_count", crate::ipc::commands::os::set_badge_count);
+        self.register(
+            "get_launch_context",
+            crate::ipc::commands::os::get_launch_context,
+        );
+        self.register(
+            "show_notification",
+            crate::ipc::commands::os::show_notification,
+        );
+        self.register(
+            "register_global_shortcut",
+            crate::ipc::commands::os::register_global_shortcut,
+        );
+        self.register(
+            "unregister_global_shortcut",
+            crate::ipc::commands::os::unregister_global_shortcut,
+        );
+        self.register(
+            "list_global_shortcuts",
+            crate::ipc::commands::os::list_global_shortcuts,
+        );
+        self.register(
+            "poll_global_shortcut_events",
+            crate::ipc::commands::os::poll_global_shortcut_events,
+        );
         self.register("clipboard_read_text", |args, _| {
             crate::ipc::commands::clipboard::clipboard_read_text(args)
         });
@@ -224,6 +248,11 @@ impl CommandRouter {
         self.register("clipboard_clear", |args, _| {
             crate::ipc::commands::clipboard::clipboard_clear(args)
         });
+        self.register(
+            "start_download",
+            crate::ipc::commands::browser::start_download,
+        );
+        self.register("print_to_pdf", crate::ipc::commands::browser::print_to_pdf);
 
         // File System Commands
         self.register("read_file", |args, _| {
@@ -244,6 +273,9 @@ impl CommandRouter {
         });
         self.register("get_metadata", |args, _| {
             crate::ipc::commands::fs::get_metadata(args)
+        });
+        self.register("create_file_stream_url", |args, _| {
+            crate::ipc::commands::fs::create_file_stream_url(args)
         });
 
         // Dialog Commands

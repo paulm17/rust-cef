@@ -102,12 +102,8 @@ impl WorkspaceConfig {
         if let Ok(content) = fs::read_to_string("config.toml") {
             let parsed: Result<WorkspaceConfig, _> = toml::from_str(&content);
             match parsed {
-                Ok(config) => {
-                    config
-                },
-                Err(_) => {
-                    Self::default()
-                }
+                Ok(config) => config,
+                Err(_) => Self::default(),
             }
         } else {
             Self::default()

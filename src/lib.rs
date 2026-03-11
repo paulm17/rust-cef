@@ -15,8 +15,9 @@ use objc2::{
 use winit::platform::macos::EventLoopBuilderExtMacOS;
 
 use std::os::unix::process::CommandExt;
+use std::sync::mpsc;
 
-use cef::{self, ImplBrowser, ImplBrowserHost, ImplFrame};
+use cef::{self, CefString, ImplBrowser, ImplBrowserHost, ImplFrame};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::sync::Arc;
 pub mod app;
@@ -25,9 +26,11 @@ pub mod backend;
 pub mod client;
 pub mod config;
 pub mod debug_logger;
+pub mod error_reporting;
 pub mod ipc;
 pub mod menus;
 pub mod platform;
+pub mod security;
 pub mod state;
 pub mod tray;
 pub mod window_manager;
@@ -58,9 +61,29 @@ pub struct WindowConfig {
 }
 
 #[derive(Debug, Clone)]
+pub struct PrintToPdfRequest {
+    pub path: String,
+    pub landscape: bool,
+    pub print_background: bool,
+    pub display_header_footer: bool,
+    pub scale: f64,
+    pub response_tx: mpsc::Sender<Result<serde_json::Value, String>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StartDownloadRequest {
+    pub url: String,
+    pub path: Option<String>,
+    pub show_dialog: bool,
+    pub response_tx: mpsc::Sender<Result<serde_json::Value, String>>,
+}
+
+#[derive(Debug, Clone)]
 pub enum AppEvent {
     ContentLoaded,
     CreateWindow(WindowConfig),
+    PrintToPdf(PrintToPdfRequest),
+    StartDownload(StartDownloadRequest),
     ScheduleMessagePumpWork(i64),
     SetDecorations(Option<usize>, bool),
     SetAlwaysOnTop(Option<usize>, bool),
@@ -73,6 +96,73 @@ use std::sync::OnceLock;
 pub static EVENT_LOOP_PROXY: OnceLock<
     std::sync::Mutex<winit::event_loop::EventLoopProxy<AppEvent>>,
 > = OnceLock::new();
+
+struct PdfPrintCallbackBridge {
+    object: *mut cef::rc::RcImpl<cef::sys::_cef_pdf_print_callback_t, Self>,
+    response_tx: mpsc::Sender<Result<serde_json::Value, String>>,
+}
+
+impl PdfPrintCallbackBridge {
+    fn new(response_tx: mpsc::Sender<Result<serde_json::Value, String>>) -> cef::PdfPrintCallback {
+        cef::PdfPrintCallback::new(Self {
+            object: std::ptr::null_mut(),
+            response_tx,
+        })
+    }
+}
+
+impl cef::WrapPdfPrintCallback for PdfPrintCallbackBridge {
+    fn wrap_rc(&mut self, object: *mut cef::rc::RcImpl<cef::sys::_cef_pdf_print_callback_t, Self>) {
+        self.object = object;
+    }
+}
+
+impl cef::rc::Rc for PdfPrintCallbackBridge {
+    fn as_base(&self) -> &cef::sys::cef_base_ref_counted_t {
+        unsafe {
+            let base = &*self.object;
+            std::mem::transmute(&base.cef_object)
+        }
+    }
+}
+
+impl Clone for PdfPrintCallbackBridge {
+    fn clone(&self) -> Self {
+        let object = unsafe {
+            let rc_impl = &mut *self.object;
+            cef::rc::Rc::add_ref(&rc_impl.interface);
+            rc_impl
+        };
+
+        Self {
+            object,
+            response_tx: self.response_tx.clone(),
+        }
+    }
+}
+
+impl cef::ImplPdfPrintCallback for PdfPrintCallbackBridge {
+    fn get_raw(&self) -> *mut cef::sys::_cef_pdf_print_callback_t {
+        self.object.cast()
+    }
+
+    fn on_pdf_print_finished(&self, path: Option<&CefString>, ok: std::os::raw::c_int) {
+        let path = path
+            .map(cef::CefStringUtf8::from)
+            .and_then(|value| value.as_str().map(|value| value.to_string()))
+            .unwrap_or_default();
+        let result = if ok != 0 {
+            Ok(serde_json::json!({
+                "status": "printed",
+                "path": path,
+            }))
+        } else {
+            Err(format!("CEF failed to print PDF: {path}"))
+        };
+
+        let _ = self.response_tx.send(result);
+    }
+}
 
 fn logical_window_bounds(window: &winit::window::Window) -> Option<config::WindowBounds> {
     let position = window.outer_position().ok()?;
@@ -217,6 +307,8 @@ impl App {
     }
 
     pub fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+        crate::error_reporting::install_panic_hook();
+
         // Ensure assets are provided
         let asset_resolver = self
             .asset_resolver
@@ -258,8 +350,16 @@ impl App {
         let mut dev_process = None;
         let mut dev_target_url = None;
         let mut dev_target_port = None;
+        let deep_link_arg = crate::security::extract_deep_link_arg(&args);
+        let launch_files = crate::security::extract_file_args(&args);
+        let _ = crate::state::set_launch_context(crate::state::LaunchContext {
+            deep_link: deep_link_arg.clone(),
+            files: launch_files,
+        });
 
-        let start_url = if dev_flag && !is_bundle && !is_subprocess {
+        let start_url = if is_subprocess {
+            "about:blank".to_string()
+        } else if dev_flag && !is_bundle {
             if let Some(config) = &self.dev_config {
                 dev_target_port = parse_port_from_url(&config.url);
                 if let Some(port) = dev_target_port {
@@ -345,7 +445,14 @@ impl App {
                 }
 
                 // Store the target URL to load once ready
-                dev_target_url = Some(config.url.clone());
+                dev_target_url = Some(
+                    deep_link_arg
+                        .as_deref()
+                        .map(|deep_link| {
+                            crate::security::make_deep_link_start_url(&config.url, deep_link)
+                        })
+                        .unwrap_or_else(|| config.url.clone()),
+                );
 
                 // Create a temporary loading file
                 let loading_html = format!("<html><body style='background:#111;color:#eee;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh'><h1>Starting Dev Server...</h1><p>Waiting for {}</p></body></html>", config.url);
@@ -363,8 +470,17 @@ impl App {
             }
         } else {
             // Production / Fallback
-            crate::app::get_start_url()
+            let base_url = crate::app::get_start_url();
+            deep_link_arg
+                .as_deref()
+                .map(|deep_link| crate::security::make_deep_link_start_url(&base_url, deep_link))
+                .unwrap_or(base_url)
         };
+
+        if !is_subprocess {
+            crate::security::enforce_url_policy(&start_url, dev_flag)
+                .map_err(|err| format!("Invalid startup URL: {err}"))?;
+        }
 
         // 0. LOAD LIBRARY (MacOS specific)
         #[cfg(target_os = "macos")]
@@ -465,6 +581,8 @@ impl App {
         let proxy = event_loop.create_proxy();
         router.set_proxy(proxy.clone());
         let _ = EVENT_LOOP_PROXY.set(std::sync::Mutex::new(proxy.clone()));
+        crate::state::init_global_shortcut_manager()
+            .map_err(|err| format!("Failed to initialize global shortcut manager: {err}"))?;
 
         let mut window_manager = WindowManager::new();
         let mut config_manager = config::ConfigManager::new();
@@ -812,6 +930,17 @@ impl App {
             let _ = &tray_menu;
             let _ = &tray_icon;
 
+            while let Ok(shortcut_event) = global_hotkey::GlobalHotKeyEvent::receiver().try_recv() {
+                let state = match shortcut_event.state {
+                    global_hotkey::HotKeyState::Pressed => "pressed",
+                    global_hotkey::HotKeyState::Released => "released",
+                };
+                if let Err(err) = crate::state::push_global_shortcut_event(shortcut_event.id, state)
+                {
+                    tracing::warn!("failed to enqueue global shortcut event: {}", err);
+                }
+            }
+
             match event {
                 Event::UserEvent(AppEvent::ScheduleMessagePumpWork(delay_ms)) => {
                     if delay_ms <= 0 {
@@ -954,6 +1083,82 @@ impl App {
                         if let Some(host) = b.host() {
                             host.was_resized();
                         }
+                    }
+                }
+                Event::UserEvent(AppEvent::PrintToPdf(request)) => {
+                    let target_browser = focused_window_id
+                        .and_then(|window_id| window_manager.get(window_id))
+                        .and_then(|managed| managed.browser.as_ref())
+                        .or_else(|| {
+                            window_manager
+                                .get(main_window_id)
+                                .and_then(|managed| managed.browser.as_ref())
+                        });
+
+                    if let Some(browser) = target_browser {
+                        if let Some(host) = browser.host() {
+                            let mut settings = cef::PdfPrintSettings::default();
+                            settings.landscape = if request.landscape { 1 } else { 0 };
+                            settings.print_background =
+                                if request.print_background { 1 } else { 0 };
+                            settings.display_header_footer =
+                                if request.display_header_footer { 1 } else { 0 };
+                            settings.scale = request.scale;
+
+                            let mut callback =
+                                PdfPrintCallbackBridge::new(request.response_tx.clone());
+                            host.print_to_pdf(
+                                Some(&cef::CefString::from(request.path.as_str())),
+                                Some(&settings),
+                                Some(&mut callback),
+                            );
+                        } else {
+                            let _ = request
+                                .response_tx
+                                .send(Err("Browser host unavailable for PDF printing".to_string()));
+                        }
+                    } else {
+                        let _ = request.response_tx.send(Err(
+                            "No active browser available for PDF printing".to_string(),
+                        ));
+                    }
+                }
+                Event::UserEvent(AppEvent::StartDownload(request)) => {
+                    let target_browser = focused_window_id
+                        .and_then(|window_id| window_manager.get(window_id))
+                        .and_then(|managed| managed.browser.as_ref())
+                        .or_else(|| {
+                            window_manager
+                                .get(main_window_id)
+                                .and_then(|managed| managed.browser.as_ref())
+                        });
+
+                    if let Some(browser) = target_browser {
+                        let browser_id = browser.identifier();
+                        let pending_download = crate::state::PendingDownload {
+                            path: request.path.clone(),
+                            show_dialog: request.show_dialog,
+                        };
+
+                        if let Err(error) =
+                            crate::state::set_pending_download(browser_id, pending_download)
+                        {
+                            let _ = request.response_tx.send(Err(error));
+                        } else if let Some(host) = browser.host() {
+                            host.start_download(Some(&cef::CefString::from(request.url.as_str())));
+                            let _ = request.response_tx.send(Ok(serde_json::json!({
+                                "status": "started",
+                                "url": request.url,
+                            })));
+                        } else {
+                            let _ = request
+                                .response_tx
+                                .send(Err("Browser host unavailable for download".to_string()));
+                        }
+                    } else {
+                        let _ = request
+                            .response_tx
+                            .send(Err("No active browser available for download".to_string()));
                     }
                 }
                 Event::UserEvent(AppEvent::SetDecorations(id_opt, show)) => {

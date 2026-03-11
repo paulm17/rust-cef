@@ -63,6 +63,35 @@ APP_NAME="Rust CEF"
 BUNDLE_DIR="target/release/${APP_NAME}.app"
 FRAMEWORKS_DIR="${BUNDLE_DIR}/Contents/Frameworks"
 MAIN_EXEC_NAME="rust-cef"
+PLIST_PATH="${BUNDLE_DIR}/Contents/Info.plist"
+
+echo "🧩 Configuring bundle URL schemes and document types..."
+/usr/libexec/PlistBuddy -c "Delete :CFBundleURLTypes" "${PLIST_PATH}" >/dev/null 2>&1 || true
+/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes array" "${PLIST_PATH}"
+/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0 dict" "${PLIST_PATH}"
+/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLName string com.rustcef.app.deeplink" "${PLIST_PATH}"
+/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" "${PLIST_PATH}"
+/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string rustcef" "${PLIST_PATH}"
+/usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:1 string rust-cef" "${PLIST_PATH}"
+
+/usr/libexec/PlistBuddy -c "Delete :CFBundleDocumentTypes" "${PLIST_PATH}" >/dev/null 2>&1 || true
+/usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes array" "${PLIST_PATH}"
+/usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0 dict" "${PLIST_PATH}"
+/usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:CFBundleTypeName string Rust CEF Document" "${PLIST_PATH}"
+/usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSHandlerRank string Owner" "${PLIST_PATH}"
+/usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes array" "${PLIST_PATH}"
+/usr/libexec/PlistBuddy -c "Add :CFBundleDocumentTypes:0:LSItemContentTypes:0 string com.rustcef.document" "${PLIST_PATH}"
+
+/usr/libexec/PlistBuddy -c "Delete :UTExportedTypeDeclarations" "${PLIST_PATH}" >/dev/null 2>&1 || true
+/usr/libexec/PlistBuddy -c "Add :UTExportedTypeDeclarations array" "${PLIST_PATH}"
+/usr/libexec/PlistBuddy -c "Add :UTExportedTypeDeclarations:0 dict" "${PLIST_PATH}"
+/usr/libexec/PlistBuddy -c "Add :UTExportedTypeDeclarations:0:UTTypeIdentifier string com.rustcef.document" "${PLIST_PATH}"
+/usr/libexec/PlistBuddy -c "Add :UTExportedTypeDeclarations:0:UTTypeDescription string Rust CEF Document" "${PLIST_PATH}"
+/usr/libexec/PlistBuddy -c "Add :UTExportedTypeDeclarations:0:UTTypeConformsTo array" "${PLIST_PATH}"
+/usr/libexec/PlistBuddy -c "Add :UTExportedTypeDeclarations:0:UTTypeConformsTo:0 string public.data" "${PLIST_PATH}"
+/usr/libexec/PlistBuddy -c "Add :UTExportedTypeDeclarations:0:UTTypeTagSpecification dict" "${PLIST_PATH}"
+/usr/libexec/PlistBuddy -c "Add :UTExportedTypeDeclarations:0:UTTypeTagSpecification:public.filename-extension array" "${PLIST_PATH}"
+/usr/libexec/PlistBuddy -c "Add :UTExportedTypeDeclarations:0:UTTypeTagSpecification:public.filename-extension:0 string rustcef" "${PLIST_PATH}"
 
 create_helper() {
     local SUFFIX="$1"

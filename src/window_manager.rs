@@ -1,6 +1,6 @@
+use cef;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use cef;
 use winit::window::Window;
 use winit::window::WindowId;
 
@@ -25,11 +25,14 @@ impl WindowManager {
 
     pub fn insert(&mut self, window: Window, persist_key: Option<String>) -> usize {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.windows.insert(id, ManagedWindow {
-            window,
-            browser: None,
-            persist_key,
-        });
+        self.windows.insert(
+            id,
+            ManagedWindow {
+                window,
+                browser: None,
+                persist_key,
+            },
+        );
         id
     }
 
@@ -56,7 +59,7 @@ impl WindowManager {
     pub fn is_empty(&self) -> bool {
         self.windows.is_empty()
     }
-    
+
     pub fn values(&self) -> impl Iterator<Item = &ManagedWindow> {
         self.windows.values()
     }

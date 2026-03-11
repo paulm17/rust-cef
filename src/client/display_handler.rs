@@ -1,10 +1,9 @@
+use crate::debug_logger::print_debug;
 use cef;
 use cef::{
-    ImplDisplayHandler, DisplayHandler, WrapDisplayHandler,
     rc::{Rc, RcImpl},
-    sys, *,
+    sys, DisplayHandler, ImplDisplayHandler, WrapDisplayHandler, *,
 };
-use crate::debug_logger::print_debug;
 use std::ptr::null_mut;
 
 #[derive(Clone)]
@@ -77,7 +76,7 @@ impl ImplDisplayHandler for DisplayHandlerBuilder {
             .map(cef::CefStringUtf8::from)
             .and_then(|s| s.as_str().map(|s| s.to_string()))
             .unwrap_or_default();
-        
+
         let source_str = source
             .map(cef::CefStringUtf8::from)
             .and_then(|s| s.as_str().map(|s| s.to_string()))
@@ -86,8 +85,11 @@ impl ImplDisplayHandler for DisplayHandlerBuilder {
         // Use debug formatting for level since enum variants are not directly matching or are newtypes
         let level_str = format!("{:?}", level);
 
-        print_debug(&format!("[JS {}] {}:{}: {}", level_str, source_str, line, message_str));
-        
+        print_debug(&format!(
+            "[JS {}] {}:{}: {}",
+            level_str, source_str, line, message_str
+        ));
+
         // Return 0 to let default behavior proceed (logging to console), or 1 to suppress
         0
     }

@@ -1,10 +1,11 @@
 use cef::{
-    Browser, Frame, ImplBrowser,
     wrapper::message_router::{BrowserSideCallback, BrowserSideHandler},
+    Browser, Frame, ImplBrowser,
 };
 use std::sync::{Arc, Mutex};
+use tracing::{debug, error};
 
-use crate::ipc::bridge::CommandRouter;
+use crate::{debug_logger::print_debug, ipc::bridge::CommandRouter};
 
 pub struct SimpleHandler {
     pub router: Arc<CommandRouter>,
@@ -21,21 +22,23 @@ impl BrowserSideHandler for SimpleHandler {
         callback: Arc<Mutex<dyn BrowserSideCallback>>,
     ) -> bool {
         let browser_id = browser.as_ref().map(|b| b.identifier()).unwrap_or(-1);
-        eprintln!("DEBUG: SimpleHandler - Query {} from browser {}", query_id, browser_id);
-        eprintln!("DEBUG: SimpleHandler - Request: '{}'", request);
+        debug!(query_id, browser_id, "IPC query received");
+        print_debug(&format!(
+            "DEBUG: SimpleHandler - Query {} from browser {}",
+            query_id, browser_id
+        ));
 
         // Dispatch using the injected router
         let response = self.router.dispatch(request);
-
-        eprintln!("DEBUG: SimpleHandler - Response: '{}'", response);
+        debug!(query_id, browser_id, "IPC query handled");
 
         match callback.lock() {
             Ok(cb) => {
                 cb.success_str(&response);
-                eprintln!("DEBUG: SimpleHandler - Response sent successfully");
+                debug!(query_id, browser_id, "IPC response sent");
             }
             Err(e) => {
-                eprintln!("ERROR: SimpleHandler - Failed to lock callback: {:?}", e);
+                error!("Failed to lock IPC callback: {:?}", e);
             }
         }
 

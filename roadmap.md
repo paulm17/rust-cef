@@ -578,9 +578,9 @@ Match Electron's feature set for professional desktop applications. Add advanced
 | Feature | Description | Rust Implementation | Priority |
 |---------|-------------|---------------------|----------|
 | Full CEF IPC | V8Handler + ProcessMessage | `CefRenderProcessHandler` | High |
-| Streaming Data | Large file transfers | Custom streaming protocol | Medium |
+| Streaming Data ✅ | Large file transfers | `app://` streamed file endpoint + tokenized URLs | Medium |
 | Binary IPC | Non-JSON data transfer | MessagePack or custom | Low |
-| IPC Performance | Sub-millisecond latency | ProcessMessage optimization | Medium |
+| IPC Performance ✅ | Lower IPC overhead | lean `cefQuery` path + reduced logging | Medium |
 | Bidirectional Events | Rust → JS events | Event emitter pattern | High |
 
 **Time Estimate:** 2-3 weeks
@@ -589,13 +589,13 @@ Match Electron's feature set for professional desktop applications. Add advanced
 
 | Feature | Description | Rust Implementation | Priority |
 |---------|-------------|---------------------|----------|
-| Notifications | System notifications | `notify-rust` | High |
-| Rich Notifications | Images, actions, sound | Platform-specific | Medium |
-| Global Shortcuts | Hotkeys outside app | `global-hotkey` crate | Medium |
+| Notifications ✅ | System notifications | macOS `osascript` IPC bridge | High |
+| Rich Notifications ✅ | Images, actions, sound | macOS rich notification bridge | Medium |
+| Global Shortcuts ✅ | Hotkeys outside app | `global-hotkey` crate + IPC polling | Medium |
 | Single Instance Lock | Prevent multiple launches | `single-instance` | High |
-| Deep Linking | Handle `myapp://` URLs | OS protocol registration | Medium |
+| Deep Linking ✅ | Handle `rustcef://` and `rust-cef://` URLs | macOS bundle URL registration + launch context IPC | Medium |
 | Recent Documents | OS recent files list | Platform-specific | Low |
-| File Associations | Open files with your app | OS registration | Medium |
+| File Associations ✅ | Open `.rustcef` documents with your app | macOS document type registration + launch context IPC | Medium |
 
 **Time Estimate:** 1-2 weeks
 
@@ -606,7 +606,7 @@ Match Electron's feature set for professional desktop applications. Add advanced
 | DevTools Always Open ✅ | Auto-open inspector | CEF `ShowDevTools()` on start | High |
 | Hot Reload ✅ | Auto-refresh on changes | File watcher + reload command | High |
 | Debug Logging ✅ | Structured logs | `tracing` with filters | Medium |
-| Error Reporting | Crash reports | `sentry` or custom | Medium |
+| Error Reporting ✅ | Crash reports | `sentry` or custom | Medium |
 | Auto-Update | Self-updating binary | `self_update` crate | High |
 
 **Time Estimate:** 2-3 weeks
@@ -615,9 +615,9 @@ Match Electron's feature set for professional desktop applications. Add advanced
 
 | Feature | Description | Rust Implementation | Priority |
 |---------|-------------|---------------------|----------|
-| Print to PDF | Generate PDFs | CEF `PrintToPDF()` | Medium |
+| Print to PDF ✅ | Generate PDFs | CEF `PrintToPDF()` | Medium |
 | Screenshot Capture | Capture page image | CEF off-screen rendering | Low |
-| Download Manager | Handle file downloads | CEF `DownloadHandler` | Medium |
+| Download Manager ✅ | Handle file downloads | CEF `DownloadHandler` | Medium |
 | Custom Context Menu | Override right-click | CEF `ContextMenuHandler` | Low |
 | Find in Page | Text search | CEF `Find()` | Low |
 | Zoom Control | Page zoom level | CEF `SetZoomLevel()` | Low |
@@ -629,8 +629,8 @@ Match Electron's feature set for professional desktop applications. Add advanced
 | Feature | Description | Rust Implementation | Priority |
 |---------|-------------|---------------------|----------|
 | Content Security Policy | Restrict JS execution | CEF CSP headers | High |
-| HTTPS Enforcement | Block insecure content | CEF request interceptor | Medium |
-| Permission Management | Camera, mic, location | CEF permission handlers | Medium |
+| HTTPS Enforcement ✅ | Block insecure content | CEF request interceptor | Medium |
+| Permission Management ✅ | Camera, mic, location | CEF permission handlers | Medium |
 | Code Signing | Sign executables | Platform signing tools | High |
 
 **Time Estimate:** 1 week
@@ -644,7 +644,7 @@ Match Electron's feature set for professional desktop applications. Add advanced
 | Linux Packages | .deb, .rpm, AppImage | `cargo-packager` | High |
 | Auto-Updater | Background updates | `self_update` + backend | High |
 | Code Signing | Trusted execution | Platform tools | High |
-| Icon Sets | Multi-resolution icons | Image generation | Medium |
+| Icon Sets ✅ | Multi-resolution icons | Image generation | Medium |
 
 **Time Estimate:** 2-3 weeks
 

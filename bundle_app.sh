@@ -69,6 +69,51 @@ cat > "$CONTENTS_DIR/Info.plist" <<EOF
     <string>$APP_NAME</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.rustcef.app.deeplink</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>rustcef</string>
+                <string>rust-cef</string>
+            </array>
+        </dict>
+    </array>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Rust CEF Document</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.rustcef.document</string>
+            </array>
+        </dict>
+    </array>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.rustcef.document</string>
+            <key>UTTypeDescription</key>
+            <string>Rust CEF Document</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>rustcef</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
     <key>PrincipalClass</key>
     <string>NSApplication</string>
     <key>NSHighResolutionCapable</key>

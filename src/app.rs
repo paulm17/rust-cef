@@ -1,13 +1,15 @@
 use cef::{
-    self, App, BrowserProcessHandler, CommandLine, ImplApp, ImplBrowser, ImplFrame, ImplBrowserProcessHandler,
-    ImplCommandLine, ImplRenderProcessHandler, RenderProcessHandler, WrapApp,
-    WrapBrowserProcessHandler, WrapRenderProcessHandler, rc::{Rc, RcImpl}, sys,
-    SchemeRegistrar, ImplSchemeRegistrar,
+    self,
+    rc::{Rc, RcImpl},
+    sys,
     wrapper::message_router::{
-        RendererSideRouter, MessageRouterConfig,
-        MessageRouterRendererSide, MessageRouterRendererSideHandlerCallbacks
+        MessageRouterConfig, MessageRouterRendererSide, MessageRouterRendererSideHandlerCallbacks,
+        RendererSideRouter,
     },
-    ImplProcessMessage,
+    App, BrowserProcessHandler, CommandLine, ImplApp, ImplBrowser, ImplBrowserProcessHandler,
+    ImplCommandLine, ImplFrame, ImplProcessMessage, ImplRenderProcessHandler, ImplSchemeRegistrar,
+    RenderProcessHandler, SchemeRegistrar, WrapApp, WrapBrowserProcessHandler,
+    WrapRenderProcessHandler,
 };
 use std::ptr::null_mut;
 
@@ -40,18 +42,15 @@ impl AppBuilder {
         print_debug("========================================");
         print_debug("DEBUG: AppBuilder::build called");
         log_debug("DEBUG: AppBuilder::build called");
-        
-        
+
         print_debug("DEBUG: AppBuilder - Creating MessageRouterConfig");
         log_debug("DEBUG: AppBuilder - Creating MessageRouterConfig");
         let router_config = MessageRouterConfig::default();
-        
-        
+
         print_debug("DEBUG: AppBuilder - Creating RendererSideRouter");
         log_debug("DEBUG: AppBuilder - Creating RendererSideRouter");
         let message_router = RendererSideRouter::new(router_config);
-        
-        
+
         print_debug("DEBUG: AppBuilder - Creating App");
         log_debug("DEBUG: AppBuilder - Creating App");
         let app = App::new(Self {
@@ -64,7 +63,7 @@ impl AppBuilder {
         print_debug("DEBUG: AppBuilder::build completed");
         print_debug("========================================");
         log_debug("DEBUG: AppBuilder::build completed");
-        
+
         app
     }
 }
@@ -123,32 +122,27 @@ impl ImplApp for AppBuilder {
         command_line.append_switch(Some(&"no-startup-window".into()));
         command_line.append_switch(Some(&"disable-popup-blocking".into()));
         command_line.append_switch(Some(&"noerrdialogs".into()));
-        
+
         #[cfg(target_os = "macos")]
         {
-            command_line.append_switch_with_value(
-                Some(&"password-store".into()),
-                Some(&"basic".into()),
-            );
+            command_line
+                .append_switch_with_value(Some(&"password-store".into()), Some(&"basic".into()));
             command_line.append_switch(Some(&"use-mock-keychain".into()));
             command_line.append_switch(Some(&"disable-encryption".into()));
         }
-        
+
         #[cfg(not(target_os = "macos"))]
         {
             command_line.append_switch(Some(&"use-mock-keychain".into()));
         }
-        
+
         command_line.append_switch(Some(&"disable-spell-checking".into()));
         command_line.append_switch(Some(&"disable-session-crashed-bubble".into()));
         command_line
             .append_switch_with_value(Some(&"remote-debugging-port".into()), Some(&"9229".into()));
     }
 
-    fn on_register_custom_schemes(
-        &self,
-        registrar: Option<&mut SchemeRegistrar>,
-    ) {
+    fn on_register_custom_schemes(&self, registrar: Option<&mut SchemeRegistrar>) {
         if let Some(registrar) = registrar {
             // Register "app" scheme as standard, secure, and cors-enabled
             // This allows it to behave like http/https and bypass CORS for relative assets
@@ -156,7 +150,7 @@ impl ImplApp for AppBuilder {
                 | (sys::cef_scheme_options_t::CEF_SCHEME_OPTION_SECURE as i32)
                 | (sys::cef_scheme_options_t::CEF_SCHEME_OPTION_CORS_ENABLED as i32)
                 | (sys::cef_scheme_options_t::CEF_SCHEME_OPTION_FETCH_ENABLED as i32);
-            
+
             registrar.add_custom_scheme(Some(&"app".into()), options);
         }
     }
@@ -179,7 +173,11 @@ impl ImplBrowserProcessHandler for AppBuilder {
         let _ = cef::register_scheme_handler_factory(
             Some(&"app".into()),
             Some(&"localhost".into()),
-            Some(&mut crate::platform::scheme_handler::AppSchemeHandlerFactory::new(self.resolver.clone())),
+            Some(
+                &mut crate::platform::scheme_handler::AppSchemeHandlerFactory::new(
+                    self.resolver.clone(),
+                ),
+            ),
         );
     }
 
@@ -212,29 +210,34 @@ impl ImplRenderProcessHandler for AppBuilder {
         print_debug("========================================");
         print_debug("DEBUG: RenderProcessHandler::on_context_created called");
         log_debug("DEBUG: RenderProcessHandler::on_context_created called");
-        
+
         let browser_id = browser.as_ref().map(|b| b.identifier()).unwrap_or(-1);
 
         print_debug(&format!("DEBUG: Renderer - Browser ID: {}", browser_id));
-        
-        let frame_id = frame.as_ref()
+
+        let frame_id = frame
+            .as_ref()
             .map(|f| cef::CefStringUtf16::from(&f.identifier()).to_string())
             .unwrap_or_else(|| "unknown".to_string());
         print_debug(&format!("DEBUG: Renderer - Frame ID: {}", frame_id));
         log_debug(&format!("DEBUG: Renderer - Frame ID: {}", frame_id));
-        
-        
-        print_debug(&format!("DEBUG: Renderer - Context present: {}", context.is_some()));
-        log_debug(&format!("DEBUG: Renderer - Context present: {}", context.is_some()));
-        
-        
+
+        print_debug(&format!(
+            "DEBUG: Renderer - Context present: {}",
+            context.is_some()
+        ));
+        log_debug(&format!(
+            "DEBUG: Renderer - Context present: {}",
+            context.is_some()
+        ));
+
         print_debug("DEBUG: Renderer - Calling message_router.on_context_created");
         log_debug("DEBUG: Renderer - Calling message_router.on_context_created");
 
         self.message_router.on_context_created(
             browser.map(|b| b.clone()),
             frame.map(|f| f.clone()),
-            context.map(|c| c.clone())
+            context.map(|c| c.clone()),
         );
 
         print_debug("DEBUG: Renderer - message_router.on_context_created completed");
@@ -253,7 +256,7 @@ impl ImplRenderProcessHandler for AppBuilder {
         self.message_router.on_context_released(
             browser.map(|b| b.clone()),
             frame.map(|f| f.clone()),
-            context.map(|c| c.clone())
+            context.map(|c| c.clone()),
         );
     }
 
@@ -267,20 +270,25 @@ impl ImplRenderProcessHandler for AppBuilder {
         print_debug("========================================");
         print_debug("DEBUG: RenderProcessHandler::on_process_message_received called");
         log_debug("DEBUG: RenderProcessHandler::on_process_message_received called");
-        
+
         let browser_id = browser.as_ref().map(|b| b.identifier()).unwrap_or(-1);
 
         print_debug(&format!("DEBUG: Renderer - Browser ID: {}", browser_id));
-        
-        
-        print_debug(&format!("DEBUG: Renderer - Source process: {:?}", source_process));
-        log_debug(&format!("DEBUG: Renderer - Source process: {:?}", source_process));
-        
+
+        print_debug(&format!(
+            "DEBUG: Renderer - Source process: {:?}",
+            source_process
+        ));
+        log_debug(&format!(
+            "DEBUG: Renderer - Source process: {:?}",
+            source_process
+        ));
+
         if let Some(msg) = message.as_ref() {
             let name = cef::CefStringUtf16::from(&msg.name()).to_string();
             print_debug(&format!("DEBUG: Renderer - Message name: '{}'", name));
             log_debug(&format!("DEBUG: Renderer - Message name: '{}'", name));
-            
+
             if msg.is_valid() != 0 {
                 print_debug("DEBUG: Renderer - Message is valid");
                 log_debug("DEBUG: Renderer - Message is valid");
@@ -300,17 +308,23 @@ impl ImplRenderProcessHandler for AppBuilder {
             browser.map(|b| b.clone()),
             frame.map(|f| f.clone()),
             Some(source_process),
-            message.as_deref().cloned()
+            message.as_deref().cloned(),
         );
 
-        print_debug(&format!("DEBUG: Renderer - Message handled by router: {}", handled));
-        log_debug(&format!("DEBUG: Renderer - Message handled by router: {}", handled));
-        
+        print_debug(&format!(
+            "DEBUG: Renderer - Message handled by router: {}",
+            handled
+        ));
+        log_debug(&format!(
+            "DEBUG: Renderer - Message handled by router: {}",
+            handled
+        ));
+
         let result = if handled { 1 } else { 0 };
         print_debug(&format!("DEBUG: Renderer - Returning: {}", result));
         print_debug("========================================");
         log_debug(&format!("DEBUG: Renderer - Returning: {}", result));
-        
+
         result
     }
 }

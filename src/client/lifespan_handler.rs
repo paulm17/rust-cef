@@ -1,5 +1,5 @@
 use cef;
-use cef::{ImplLifeSpanHandler, LifeSpanHandler, WrapLifeSpanHandler, rc::*, sys};
+use cef::{rc::*, sys, ImplLifeSpanHandler, LifeSpanHandler, WrapLifeSpanHandler};
 use std::ptr::null_mut;
 
 #[derive(Clone)]
@@ -60,11 +60,9 @@ impl ImplLifeSpanHandler for LifeSpanHandlerBuilder {
         self.object.cast()
     }
 
-    fn on_after_created(&self, _browser: Option<&mut cef::Browser>) {
-    }
+    fn on_after_created(&self, _browser: Option<&mut cef::Browser>) {}
 
-    fn on_before_close(&self, _browser: Option<&mut cef::Browser>) {
-    }
+    fn on_before_close(&self, _browser: Option<&mut cef::Browser>) {}
 
     fn on_before_popup(
         &self,

@@ -1,54 +1,64 @@
-use cef::{self, ImplClient, ImplBrowser};
+use crate::debug_logger::{log_debug, print_debug};
+use cef::{self, ImplBrowser, ImplClient};
 use cef::{
-    Client, ContextMenuHandler, LoadHandler, LifeSpanHandler, DisplayHandler, WrapClient,
     rc::{Rc, RcImpl},
     sys,
     wrapper::message_router::{
-        BrowserSideRouter, MessageRouterConfig,
-        MessageRouterBrowserSide, MessageRouterBrowserSideHandlerCallbacks
+        BrowserSideRouter, MessageRouterBrowserSide, MessageRouterBrowserSideHandlerCallbacks,
+        MessageRouterConfig,
     },
-    ImplProcessMessage,
+    Client, ContextMenuHandler, DisplayHandler, DownloadHandler, ImplProcessMessage,
+    LifeSpanHandler, LoadHandler, PermissionHandler, WrapClient,
 };
 use std::ptr::null_mut;
-use crate::debug_logger::{log_debug, print_debug};
 
 use crate::client::context_menu_handler::{ContextMenuHandlerBuilder, IcyContextMenuHandler};
+use crate::client::display_handler::{DisplayHandlerBuilder, IcyDisplayHandler};
+use crate::client::download_handler::{DownloadHandlerBuilder, IcyDownloadHandler};
 use crate::client::lifespan_handler::{IcyLifeSpanHandler, LifeSpanHandlerBuilder};
 use crate::client::load_handler::{IcyLoadHandler, LoadHandlerBuilder};
-use crate::client::display_handler::{IcyDisplayHandler, DisplayHandlerBuilder};
-use crate::ipc::handlers::SimpleHandler;
-
+use crate::client::permission_handler::{IcyPermissionHandler, PermissionHandlerBuilder};
 use crate::ipc::bridge::CommandRouter;
+use crate::ipc::handlers::SimpleHandler;
+use crate::AppEvent;
 use std::sync::Arc;
 use winit::event_loop::EventLoopProxy;
-use crate::AppEvent;
 
 pub struct IcyClient;
 
 impl IcyClient {
-    pub fn new(router: Arc<CommandRouter>, proxy: Option<EventLoopProxy<AppEvent>>) -> (Self, IcyClientHandlers) {
+    pub fn new(
+        router: Arc<CommandRouter>,
+        proxy: Option<EventLoopProxy<AppEvent>>,
+    ) -> (Self, IcyClientHandlers) {
         print_debug("========================================");
         print_debug("DEBUG: IcyClient::new called");
         log_debug("DEBUG: IcyClient::new called");
-        
+
         // Pass proxy to LoadHandler
         let load_handler = IcyLoadHandler::new(proxy);
         print_debug("DEBUG: IcyClient - LoadHandler created");
-        
+
         let lifespan_handler = IcyLifeSpanHandler::new();
         print_debug("DEBUG: IcyClient - LifeSpanHandler created");
-        
+
         let context_menu_handler = IcyContextMenuHandler::new();
         print_debug("DEBUG: IcyClient - ContextMenuHandler created");
 
         let display_handler = IcyDisplayHandler::new();
         print_debug("DEBUG: IcyClient - DisplayHandler created");
 
+        let permission_handler = IcyPermissionHandler::new();
+        print_debug("DEBUG: IcyClient - PermissionHandler created");
+
+        let download_handler = IcyDownloadHandler::new();
+        print_debug("DEBUG: IcyClient - DownloadHandler created");
+
         let router_config = MessageRouterConfig::default();
         let browser_side_router = BrowserSideRouter::new(router_config);
-        
+
         let handler = std::sync::Arc::new(SimpleHandler { router });
-        
+
         let handler_id = browser_side_router.add_handler(handler, true);
         if handler_id.is_some() {
             print_debug("DEBUG: ✓ Handler successfully added to BrowserSideRouter");
@@ -61,12 +71,14 @@ impl IcyClient {
             lifespan_handler,
             context_menu_handler,
             display_handler,
+            permission_handler,
+            download_handler,
             message_router: browser_side_router,
         };
-        
+
         print_debug("DEBUG: IcyClient::new completed");
         print_debug("========================================");
-        
+
         (Self, handlers)
     }
 }
@@ -77,6 +89,8 @@ pub struct IcyClientHandlers {
     lifespan_handler: IcyLifeSpanHandler,
     context_menu_handler: IcyContextMenuHandler,
     display_handler: IcyDisplayHandler,
+    permission_handler: IcyPermissionHandler,
+    download_handler: IcyDownloadHandler,
     message_router: std::sync::Arc<BrowserSideRouter>,
 }
 
@@ -86,6 +100,8 @@ pub(crate) struct ClientBuilder {
     lifespan_handler: LifeSpanHandler,
     context_menu_handler: ContextMenuHandler,
     display_handler: DisplayHandler,
+    permission_handler: PermissionHandler,
+    download_handler: DownloadHandler,
     message_router: std::sync::Arc<BrowserSideRouter>,
 }
 
@@ -96,19 +112,25 @@ impl ClientBuilder {
             lifespan_handler,
             context_menu_handler,
             display_handler,
+            permission_handler,
+            download_handler,
             message_router,
         } = client_handlers;
         let load_handler = LoadHandlerBuilder::build(load_handler);
         let lifespan_handler = LifeSpanHandlerBuilder::build(lifespan_handler);
         let context_menu_handler = ContextMenuHandlerBuilder::build(context_menu_handler);
         let display_handler = DisplayHandlerBuilder::build(display_handler);
-        
+        let permission_handler = PermissionHandlerBuilder::build(permission_handler);
+        let download_handler = DownloadHandlerBuilder::build(download_handler);
+
         Client::new(Self {
             object: null_mut(),
             load_handler,
             lifespan_handler,
             context_menu_handler,
             display_handler,
+            permission_handler,
+            download_handler,
             message_router,
         })
     }
@@ -143,6 +165,8 @@ impl Clone for ClientBuilder {
             lifespan_handler: self.lifespan_handler.clone(),
             context_menu_handler: self.context_menu_handler.clone(),
             display_handler: self.display_handler.clone(),
+            permission_handler: self.permission_handler.clone(),
+            download_handler: self.download_handler.clone(),
             message_router: self.message_router.clone(),
         }
     }
@@ -151,7 +175,7 @@ impl Clone for ClientBuilder {
 impl ImplClient for ClientBuilder {
     fn get_raw(&self) -> *mut sys::_cef_client_t {
         // Safe to log here? It's called very often. Maybe just once?
-        log_debug("DEBUG: Client::get_raw called"); 
+        log_debug("DEBUG: Client::get_raw called");
         self.object.cast()
     }
 
@@ -171,6 +195,14 @@ impl ImplClient for ClientBuilder {
         Some(self.display_handler.clone())
     }
 
+    fn permission_handler(&self) -> Option<cef::PermissionHandler> {
+        Some(self.permission_handler.clone())
+    }
+
+    fn download_handler(&self) -> Option<cef::DownloadHandler> {
+        Some(self.download_handler.clone())
+    }
+
     fn on_process_message_received(
         &self,
         browser: Option<&mut cef::Browser>,
@@ -181,20 +213,25 @@ impl ImplClient for ClientBuilder {
         print_debug("========================================");
         print_debug("DEBUG: Client::on_process_message_received called");
         log_debug("DEBUG: Client::on_process_message_received called");
-        
+
         let browser_id = browser.as_ref().map(|b| b.identifier()).unwrap_or(-1);
         print_debug(&format!("DEBUG: Client - Browser ID: {}", browser_id));
         log_debug(&format!("DEBUG: Client - Browser ID: {}", browser_id));
-        
-        
-        print_debug(&format!("DEBUG: Client - Source process: {:?}", source_process));
-        log_debug(&format!("DEBUG: Client - Source process: {:?}", source_process));
-        
+
+        print_debug(&format!(
+            "DEBUG: Client - Source process: {:?}",
+            source_process
+        ));
+        log_debug(&format!(
+            "DEBUG: Client - Source process: {:?}",
+            source_process
+        ));
+
         if let Some(msg) = message.as_ref() {
             let name = cef::CefStringUtf16::from(&msg.name()).to_string();
             print_debug(&format!("DEBUG: Client - Message name: '{}'", name));
             log_debug(&format!("DEBUG: Client - Message name: '{}'", name));
-            
+
             // Try to get argument list if available
             if msg.is_valid() != 0 {
                 print_debug("DEBUG: Client - Message is valid");
@@ -210,23 +247,28 @@ impl ImplClient for ClientBuilder {
 
         print_debug("DEBUG: Client - Calling message_router.on_process_message_received");
         log_debug("DEBUG: Client - Calling message_router.on_process_message_received");
-        
+
         let handled = self.message_router.on_process_message_received(
             browser.map(|b| b.clone()),
             frame.map(|f| f.clone()),
             source_process,
             message.as_deref().cloned(),
         );
-        
-        
-        print_debug(&format!("DEBUG: Client - Message handled by router: {}", handled));
-        log_debug(&format!("DEBUG: Client - Message handled by router: {}", handled));
-        
+
+        print_debug(&format!(
+            "DEBUG: Client - Message handled by router: {}",
+            handled
+        ));
+        log_debug(&format!(
+            "DEBUG: Client - Message handled by router: {}",
+            handled
+        ));
+
         let result = if handled { 1 } else { 0 };
         print_debug(&format!("DEBUG: Client - Returning: {}", result));
         print_debug("========================================");
         log_debug(&format!("DEBUG: Client - Returning: {}", result));
-        
+
         result
     }
 }
