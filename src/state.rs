@@ -3,6 +3,7 @@ use std::sync::{Mutex, OnceLock};
 
 use global_hotkey::hotkey::HotKey;
 use global_hotkey::GlobalHotKeyManager;
+use serde_json::Value;
 
 #[derive(Clone, Debug)]
 pub struct PendingDownload {
@@ -18,6 +19,7 @@ static GLOBAL_SHORTCUTS: OnceLock<Mutex<HashMap<String, RegisteredGlobalShortcut
     OnceLock::new();
 static GLOBAL_SHORTCUTS_BY_HOTKEY_ID: OnceLock<Mutex<HashMap<u32, String>>> = OnceLock::new();
 static GLOBAL_SHORTCUT_EVENTS: OnceLock<Mutex<Vec<GlobalShortcutEvent>>> = OnceLock::new();
+static APP_EVENTS: OnceLock<Mutex<Vec<AppBridgeEvent>>> = OnceLock::new();
 
 fn pending_downloads() -> &'static Mutex<HashMap<i32, PendingDownload>> {
     PENDING_DOWNLOADS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -116,6 +118,10 @@ fn global_shortcut_events() -> &'static Mutex<Vec<GlobalShortcutEvent>> {
     GLOBAL_SHORTCUT_EVENTS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
+fn app_events() -> &'static Mutex<Vec<AppBridgeEvent>> {
+    APP_EVENTS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
 pub fn init_global_shortcut_manager() -> Result<(), String> {
     if GLOBAL_SHORTCUT_MANAGER.get().is_some() {
         return Ok(());
@@ -207,14 +213,23 @@ pub fn push_global_shortcut_event(hotkey_id: u32, state: &str) -> Result<(), Str
         .cloned();
 
     if let Some(shortcut) = shortcut {
+        let event = GlobalShortcutEvent {
+            id: shortcut.id.clone(),
+            accelerator: shortcut.accelerator.clone(),
+            state: state.to_string(),
+        };
         global_shortcut_events()
             .lock()
             .map_err(|_| "Failed to lock global shortcut events state".to_string())?
-            .push(GlobalShortcutEvent {
-                id: shortcut.id,
-                accelerator: shortcut.accelerator,
-                state: state.to_string(),
-            });
+            .push(event.clone());
+        push_app_event(AppBridgeEvent {
+            event: "global-shortcut".to_string(),
+            payload: serde_json::json!({
+                "id": event.id,
+                "accelerator": event.accelerator,
+                "state": event.state,
+            }),
+        })?;
     }
 
     Ok(())
@@ -224,5 +239,26 @@ pub fn take_global_shortcut_events() -> Result<Vec<GlobalShortcutEvent>, String>
     let mut state = global_shortcut_events()
         .lock()
         .map_err(|_| "Failed to lock global shortcut events state".to_string())?;
+    Ok(std::mem::take(&mut *state))
+}
+
+#[derive(Clone, Debug)]
+pub struct AppBridgeEvent {
+    pub event: String,
+    pub payload: Value,
+}
+
+pub fn push_app_event(event: AppBridgeEvent) -> Result<(), String> {
+    app_events()
+        .lock()
+        .map_err(|_| "Failed to lock app events state".to_string())?
+        .push(event);
+    Ok(())
+}
+
+pub fn take_app_events() -> Result<Vec<AppBridgeEvent>, String> {
+    let mut state = app_events()
+        .lock()
+        .map_err(|_| "Failed to lock app events state".to_string())?;
     Ok(std::mem::take(&mut *state))
 }

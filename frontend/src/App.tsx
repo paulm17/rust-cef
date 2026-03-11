@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import reactLogo from './assets/react.svg'
 import viteLogo from '/vite.svg'
 import './App.css'
-import { invoke, RustFileSystem, RustWindow, RustOS } from './rust-api'
+import { invoke, RustClipboard, RustEvents, RustFileSystem, RustWindow, RustOS } from './rust-api'
 import type { ShowMessageDialogRequest } from './types'
 
 interface AppInfo {
@@ -30,12 +30,19 @@ function App() {
   const [streamPath, setStreamPath] = useState('')
   const [streamUrl, setStreamUrl] = useState('')
   const [streamMimeType, setStreamMimeType] = useState('')
+  const [clipboardImagePreview, setClipboardImagePreview] = useState('')
 
   const addLog = (msg: string) => setLogs(prev => [...prev, msg])
 
   useEffect(() => {
     const hasCef = typeof (window as any).cefQuery === 'function';
     addLog(hasCef ? '✓ CEF bridge detected' : '⚠️ Dev mode (no CEF)');
+  }, [])
+
+  useEffect(() => {
+    return RustEvents.subscribe(({ event, payload }) => {
+      addLog(`⇠ event ${event}: ${JSON.stringify(payload)}`);
+    });
   }, [])
 
   const handleGreet = async () => {
@@ -368,6 +375,70 @@ function App() {
     addLog(`✓ Opened stream URL`);
   }
 
+  const handlePollAppEvents = async () => {
+    setError('');
+    addLog('→ poll_app_events()');
+    try {
+      const events = await RustOS.pollAppEvents();
+      if (events.length === 0) {
+        addLog('• No app events');
+      } else {
+        for (const event of events) {
+          addLog(`✓ App event: ${event.event} ${JSON.stringify(event.payload)}`);
+        }
+      }
+    } catch (e) {
+      const msg = (e as Error).message;
+      setError(msg);
+      addLog(`✗ ${msg}`);
+    }
+  }
+
+  const handleReadClipboardImage = async () => {
+    setError('');
+    addLog('→ clipboard_read_image()');
+    try {
+      const image = await RustClipboard.readImage();
+      const blob = new Blob([image.bytes], { type: 'image/png' });
+      setClipboardImagePreview(URL.createObjectURL(blob));
+      addLog(`✓ Clipboard image read: ${image.width}x${image.height}`);
+    } catch (e) {
+      const msg = (e as Error).message;
+      setError(msg);
+      addLog(`✗ ${msg}`);
+    }
+  }
+
+  const handleWriteClipboardImage = async () => {
+    setError('');
+    addLog('→ clipboard_write_image()');
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = 64;
+      canvas.height = 64;
+      const context = canvas.getContext('2d');
+      if (!context) {
+        throw new Error('Canvas 2D context unavailable');
+      }
+      context.fillStyle = '#1f6feb';
+      context.fillRect(0, 0, 64, 64);
+      context.fillStyle = '#ffffff';
+      context.font = 'bold 28px sans-serif';
+      context.fillText('RC', 10, 40);
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+      if (!blob) {
+        throw new Error('Failed to create PNG blob');
+      }
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      await RustClipboard.writeImage(bytes);
+      addLog('✓ Wrote demo image to clipboard');
+    } catch (e) {
+      const msg = (e as Error).message;
+      setError(msg);
+      addLog(`✗ ${msg}`);
+    }
+  }
+
   return (
     <>
       <div>
@@ -479,6 +550,7 @@ function App() {
               <button onClick={handleRegisterShortcut}>Register Shortcut</button>
               <button onClick={handleUnregisterShortcut}>Unregister Shortcut</button>
               <button onClick={handlePollShortcutEvents}>Poll Shortcut Events</button>
+              <button onClick={handlePollAppEvents}>Poll App Events</button>
             </div>
           </div>
 
@@ -518,6 +590,21 @@ function App() {
                 <div>MIME: {streamMimeType}</div>
                 <div style={{ wordBreak: 'break-all' }}>{streamUrl}</div>
               </div>
+            )}
+          </div>
+
+          <div style={{ textAlign: 'left', marginTop: '12px' }}>
+            <div style={{ marginBottom: '6px' }}><strong>Image Clipboard</strong></div>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+              <button onClick={handleWriteClipboardImage}>Write Demo Image</button>
+              <button onClick={handleReadClipboardImage}>Read Clipboard Image</button>
+            </div>
+            {clipboardImagePreview && (
+              <img
+                src={clipboardImagePreview}
+                alt="Clipboard preview"
+                style={{ maxWidth: '160px', maxHeight: '160px', borderRadius: '8px', border: '1px solid #333' }}
+              />
             )}
           </div>
         </div>

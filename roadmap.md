@@ -129,11 +129,11 @@ Create a functional desktop application with essential features needed for 90% o
 - [x] Separator items
 - **Crates:** `muda`
 
-#### 8. Clipboard Access (Week 3) ✅ (Text support implemented)
+#### 8. Clipboard Access (Week 3) ✅
 - [x] Read text from clipboard
 - [x] Write text to clipboard
-- [ ] Read images from clipboard
-- [ ] Write images to clipboard
+- [x] Read images from clipboard
+- [x] Write images to clipboard
 - [x] Clear clipboard
 - **Crates:** `arboard`
 
@@ -577,11 +577,11 @@ Match Electron's feature set for professional desktop applications. Add advanced
 
 | Feature | Description | Rust Implementation | Priority |
 |---------|-------------|---------------------|----------|
-| Full CEF IPC | V8Handler + ProcessMessage | `CefRenderProcessHandler` | High |
+| Full CEF IPC ✅ | Renderer/browser bridge + JS event dispatch | `CefRenderProcessHandler` + message router + `execute_java_script` | High |
 | Streaming Data ✅ | Large file transfers | `app://` streamed file endpoint + tokenized URLs | Medium |
-| Binary IPC | Non-JSON data transfer | MessagePack or custom | Low |
+| Binary IPC ✅ | Non-JSON data transfer | Base64-backed `Uint8Array` helpers over CEF IPC | Low |
 | IPC Performance ✅ | Lower IPC overhead | lean `cefQuery` path + reduced logging | Medium |
-| Bidirectional Events | Rust → JS events | Event emitter pattern | High |
+| Bidirectional Events ✅ | Rust → JS events | browser event dispatch + polling queue | High |
 
 **Time Estimate:** 2-3 weeks
 
@@ -592,7 +592,7 @@ Match Electron's feature set for professional desktop applications. Add advanced
 | Notifications ✅ | System notifications | macOS `osascript` IPC bridge | High |
 | Rich Notifications ✅ | Images, actions, sound | macOS rich notification bridge | Medium |
 | Global Shortcuts ✅ | Hotkeys outside app | `global-hotkey` crate + IPC polling | Medium |
-| Single Instance Lock | Prevent multiple launches | `single-instance` | High |
+| Single Instance Lock ✅ | Prevent multiple launches | local socket handoff + window focus | High |
 | Deep Linking ✅ | Handle `rustcef://` and `rust-cef://` URLs | macOS bundle URL registration + launch context IPC | Medium |
 | Recent Documents | OS recent files list | Platform-specific | Low |
 | File Associations ✅ | Open `.rustcef` documents with your app | macOS document type registration + launch context IPC | Medium |
@@ -635,16 +635,23 @@ Match Electron's feature set for professional desktop applications. Add advanced
 
 **Time Estimate:** 1 week
 
-#### Category G: Professional Packaging
+#### Category G: Packaging Phase
 
 | Feature | Description | Rust Implementation | Priority |
 |---------|-------------|---------------------|----------|
-| Windows MSI | Windows installer | `cargo-packager` | High |
-| macOS DMG | macOS disk image | `cargo-packager` | High |
-| Linux Packages | .deb, .rpm, AppImage | `cargo-packager` | High |
+| Windows MSI | Windows installer output | `cargo-packager` + signing pipeline | High |
+| macOS DMG | macOS disk image output | `cargo-packager` + helper app packaging | High |
+| Linux Packages | .deb, .rpm, AppImage outputs | `cargo-packager` + distro metadata | High |
+| Signing / Notarization | Trusted execution and platform trust | platform signing tools + CI secrets | High |
 | Auto-Updater | Background updates | `self_update` + backend | High |
-| Code Signing | Trusted execution | Platform tools | High |
 | Icon Sets ✅ | Multi-resolution icons | Image generation | Medium |
+
+**Packaging Phase Deliverables:**
+- reproducible Windows MSI build
+- reproducible macOS `.app` + DMG build
+- reproducible Linux package builds (`.deb`, `.rpm`, AppImage)
+- signing/notarization configuration and CI hooks
+- updater design after installers are stable
 
 **Time Estimate:** 2-3 weeks
 
@@ -1128,7 +1135,7 @@ impl ImplClient for ClientBuilder {
 |---------|-----------|----------------|------------|------------|
 | **Window Management** | ✅ Basic | Multiple windows | CEF + Winit | Low |
 | **Asset Loading** | ✅ Custom protocol | Advanced caching | `rust-embed` | Low |
-| **IPC Bridge** | ✅ Simple (fetch) | Advanced (V8) | Custom | Medium |
+| **IPC Bridge** | ✅ Event-capable CEF bridge | V8-native bridge polish | Custom | Medium |
 | **File System** | ✅ Full | Watching | `std::fs`, `notify` | Low |
 | **File Dialogs** | ✅ Full | Remember locations | `rfd` | Low |
 | **System Tray** | ✅ Full | Animations | `tray-icon` | Low |

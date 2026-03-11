@@ -31,6 +31,7 @@ pub mod ipc;
 pub mod menus;
 pub mod platform;
 pub mod security;
+pub mod single_instance;
 pub mod state;
 pub mod tray;
 pub mod window_manager;
@@ -82,6 +83,7 @@ pub struct StartDownloadRequest {
 pub enum AppEvent {
     ContentLoaded,
     CreateWindow(WindowConfig),
+    ExternalLaunch(crate::state::LaunchContext),
     PrintToPdf(PrintToPdfRequest),
     StartDownload(StartDownloadRequest),
     ScheduleMessagePumpWork(i64),
@@ -175,6 +177,31 @@ fn logical_window_bounds(window: &winit::window::Window) -> Option<config::Windo
         width: logical_size.width,
         height: logical_size.height,
     })
+}
+
+fn emit_browser_event(
+    window_manager: &WindowManager,
+    window_id: usize,
+    event: &str,
+    payload: serde_json::Value,
+) {
+    let script = format!(
+        "window.dispatchEvent(new CustomEvent('rust-cef-event', {{ detail: {{ event: {}, payload: {} }} }}));",
+        serde_json::to_string(event).unwrap_or_else(|_| "\"unknown\"".to_string()),
+        payload
+    );
+
+    if let Some(managed) = window_manager.get(window_id) {
+        if let Some(browser) = &managed.browser {
+            if let Some(frame) = browser.main_frame() {
+                frame.execute_java_script(
+                    Some(&cef::CefString::from(script.as_str())),
+                    Some(&cef::CefString::from("app://localhost/__rust_event__.js")),
+                    1,
+                );
+            }
+        }
+    }
 }
 
 /// Configuration for the Development Environment
@@ -322,6 +349,19 @@ impl App {
         set_debug_mode(debug_flag);
 
         let dev_flag = args.iter().any(|a| a == "--dev");
+        let is_subprocess = args.iter().any(|a| a.starts_with("--type="));
+        let single_instance_mode = if !is_subprocess {
+            Some(crate::single_instance::acquire(&args)?)
+        } else {
+            None
+        };
+        #[cfg(unix)]
+        if matches!(
+            single_instance_mode,
+            Some(crate::single_instance::InstanceMode::Secondary)
+        ) {
+            return Ok(());
+        }
         init_logging(dev_flag, debug_flag);
         tracing::info!(
             pid = std::process::id(),
@@ -337,7 +377,6 @@ impl App {
         let is_bundle = std::env::current_exe().map_or(false, |p| {
             p.to_string_lossy().contains(".app/Contents/MacOS")
         });
-        let is_subprocess = args.iter().any(|a| a.starts_with("--type="));
         let log_prefix = if is_subprocess { "[HELPER]" } else { "[MAIN]" };
 
         print_debug(&format!("{} PID: {}", log_prefix, std::process::id()));
@@ -351,11 +390,8 @@ impl App {
         let mut dev_target_url = None;
         let mut dev_target_port = None;
         let deep_link_arg = crate::security::extract_deep_link_arg(&args);
-        let launch_files = crate::security::extract_file_args(&args);
-        let _ = crate::state::set_launch_context(crate::state::LaunchContext {
-            deep_link: deep_link_arg.clone(),
-            files: launch_files,
-        });
+        let launch_context = crate::single_instance::extract_launch_context(&args);
+        let _ = crate::state::set_launch_context(launch_context.clone());
 
         let start_url = if is_subprocess {
             "about:blank".to_string()
@@ -583,6 +619,18 @@ impl App {
         let _ = EVENT_LOOP_PROXY.set(std::sync::Mutex::new(proxy.clone()));
         crate::state::init_global_shortcut_manager()
             .map_err(|err| format!("Failed to initialize global shortcut manager: {err}"))?;
+        #[cfg(unix)]
+        if let Some(crate::single_instance::InstanceMode::Primary(listener)) = single_instance_mode
+        {
+            let proxy = proxy.clone();
+            crate::single_instance::start_listener(
+                listener,
+                Box::new(move |payload| {
+                    let context = crate::single_instance::extract_launch_context(&payload.args);
+                    let _ = proxy.send_event(AppEvent::ExternalLaunch(context));
+                }),
+            );
+        }
 
         let mut window_manager = WindowManager::new();
         let mut config_manager = config::ConfigManager::new();
@@ -938,6 +986,22 @@ impl App {
                 if let Err(err) = crate::state::push_global_shortcut_event(shortcut_event.id, state)
                 {
                     tracing::warn!("failed to enqueue global shortcut event: {}", err);
+                } else if let Ok(events) = crate::state::list_global_shortcuts() {
+                    if let Some(shortcut) = events
+                        .into_iter()
+                        .find(|shortcut| shortcut.hotkey.id() == shortcut_event.id)
+                    {
+                        emit_browser_event(
+                            &window_manager,
+                            main_window_id,
+                            "global-shortcut",
+                            serde_json::json!({
+                                "id": shortcut.id,
+                                "accelerator": shortcut.accelerator,
+                                "state": state,
+                            }),
+                        );
+                    }
                 }
             }
 
@@ -970,6 +1034,23 @@ impl App {
                             }
                         }
                     }
+                }
+                Event::UserEvent(AppEvent::ExternalLaunch(context)) => {
+                    let _ = crate::state::set_launch_context(context.clone());
+                    let payload = serde_json::json!({
+                        "deep_link": context.deep_link,
+                        "files": context.files,
+                    });
+                    let _ = crate::state::push_app_event(crate::state::AppBridgeEvent {
+                        event: "external-launch".to_string(),
+                        payload: payload.clone(),
+                    });
+                    emit_browser_event(&window_manager, main_window_id, "external-launch", payload);
+                    if let Some(managed) = window_manager.get(main_window_id) {
+                        managed.window.set_visible(true);
+                        managed.window.focus_window();
+                    }
+                    print_info("External launch forwarded to primary instance");
                 }
                 Event::UserEvent(AppEvent::CreateWindow(config)) => {
                     print_info(&format!("Received CreateWindow request: {}", config.url));

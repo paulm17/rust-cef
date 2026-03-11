@@ -239,11 +239,18 @@ impl CommandRouter {
             "poll_global_shortcut_events",
             crate::ipc::commands::os::poll_global_shortcut_events,
         );
+        self.register("poll_app_events", crate::ipc::commands::os::poll_app_events);
         self.register("clipboard_read_text", |args, _| {
             crate::ipc::commands::clipboard::clipboard_read_text(args)
         });
         self.register("clipboard_write_text", |args, _| {
             crate::ipc::commands::clipboard::clipboard_write_text(args)
+        });
+        self.register("clipboard_read_image", |args, _| {
+            crate::ipc::commands::clipboard::clipboard_read_image(args)
+        });
+        self.register("clipboard_write_image", |args, _| {
+            crate::ipc::commands::clipboard::clipboard_write_image(args)
         });
         self.register("clipboard_clear", |args, _| {
             crate::ipc::commands::clipboard::clipboard_clear(args)

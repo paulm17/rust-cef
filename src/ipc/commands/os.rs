@@ -241,6 +241,20 @@ pub fn poll_global_shortcut_events(
         .collect::<Vec<_>>()))
 }
 
+pub fn poll_app_events(
+    _args: &Value,
+    _proxy: &Option<Arc<Mutex<EventLoopProxy<crate::AppEvent>>>>,
+) -> Result<Value, String> {
+    let events = crate::state::take_app_events()?;
+    Ok(serde_json::json!(events
+        .into_iter()
+        .map(|event| serde_json::json!({
+            "event": event.event,
+            "payload": event.payload,
+        }))
+        .collect::<Vec<_>>()))
+}
+
 #[cfg(target_os = "macos")]
 fn notification_response(response: NotificationResponse) -> Value {
     match response {

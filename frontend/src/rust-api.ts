@@ -40,6 +40,42 @@ export async function invoke<T = unknown>(
     }
 }
 
+export async function invokeBinary(
+    command: string,
+    args: Record<string, unknown> = {},
+    field = 'png_base64',
+): Promise<Uint8Array> {
+    const result = await invoke<Record<string, unknown>>(command, args);
+    const base64 = result[field];
+    if (typeof base64 !== 'string') {
+        throw new Error(`Binary field '${field}' missing from IPC response`);
+    }
+
+    const bytes = atob(base64);
+    const buffer = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i += 1) {
+        buffer[i] = bytes.charCodeAt(i);
+    }
+    return buffer;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+    let binary = '';
+    for (const byte of bytes) {
+        binary += String.fromCharCode(byte);
+    }
+    return btoa(binary);
+}
+
+function base64ToBytes(base64: string): Uint8Array {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+}
+
 // --- Types ---
 
 export interface FileMetadata {
@@ -262,6 +298,30 @@ export class RustOS {
             state: 'pressed' | 'released';
         }>>('poll_global_shortcut_events');
     }
+
+    static async pollAppEvents(): Promise<Array<{
+        event: string;
+        payload: Record<string, unknown>;
+    }>> {
+        return invoke<Array<{
+            event: string;
+            payload: Record<string, unknown>;
+        }>>('poll_app_events');
+    }
+}
+
+export class RustEvents {
+    static subscribe(
+        listener: (event: { event: string; payload: Record<string, unknown> }) => void,
+    ): () => void {
+        const handler = (rawEvent: Event) => {
+            const event = rawEvent as CustomEvent<{ event: string; payload: Record<string, unknown> }>;
+            listener(event.detail);
+        };
+
+        window.addEventListener('rust-cef-event', handler as EventListener);
+        return () => window.removeEventListener('rust-cef-event', handler as EventListener);
+    }
 }
 
 export class RustClipboard {
@@ -276,5 +336,24 @@ export class RustClipboard {
 
     static async clear(): Promise<void> {
         await invoke<{ status: string }>('clipboard_clear');
+    }
+
+    static async readImage(): Promise<{
+        bytes: Uint8Array;
+        width: number;
+        height: number;
+    }> {
+        const meta = await invoke<{ png_base64: string; width: number; height: number }>('clipboard_read_image');
+        return {
+            bytes: base64ToBytes(meta.png_base64),
+            width: meta.width,
+            height: meta.height,
+        };
+    }
+
+    static async writeImage(bytes: Uint8Array): Promise<void> {
+        await invoke('clipboard_write_image', {
+            png_base64: bytesToBase64(bytes),
+        });
     }
 }
