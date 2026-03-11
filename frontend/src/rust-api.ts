@@ -212,11 +212,11 @@ export interface StartDownloadOptions {
 
 export class RustBrowser {
     static async printToPdf(options: PrintToPdfOptions): Promise<{ status: string; path: string }> {
-        return invoke<{ status: string; path: string }>('print_to_pdf', options as Record<string, unknown>);
+        return invoke<{ status: string; path: string }>('print_to_pdf', options as unknown as Record<string, unknown>);
     }
 
     static async startDownload(options: StartDownloadOptions): Promise<{ status: string; url: string }> {
-        return invoke<{ status: string; url: string }>('start_download', options as Record<string, unknown>);
+        return invoke<{ status: string; url: string }>('start_download', options as unknown as Record<string, unknown>);
     }
 }
 

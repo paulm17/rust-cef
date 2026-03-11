@@ -3,6 +3,14 @@ name = "rust-cef"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = [
+    ".",
+    "crates/rust-cef-packager",
+    "crates/xtask",
+]
+resolver = "2"
+
 [dependencies]
 winit = "0.29"
 cef = { git = "https://github.com/tauri-apps/cef-rs", rev = "145bbc50358645eeee7339ad81f71dd36b62f962" }

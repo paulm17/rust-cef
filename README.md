@@ -2,15 +2,17 @@
 
 Rust + CEF desktop shell with a typed frontend bridge, embedded `app://` assets for production, and a dev workflow based on Bun/Vite.
 
+Packaging is now split into a reusable library crate at [crates/rust-cef-packager](/Volumes/Data/Users/paul/development/src/github/rust-cef/crates/rust-cef-packager) and a thin workspace CLI at [crates/xtask](/Volumes/Data/Users/paul/development/src/github/rust-cef/crates/xtask).
+
 ## Status
 
-This repo has completed the low-, medium-, and high-feature implementation phases from the current roadmap. The remaining work is the packaging/release phase:
+This repo has completed the low-, medium-, and high-feature implementation phases from the current roadmap. Packaging is now wired through reusable workspace tooling:
 
-- Windows MSI
-- macOS DMG
-- Linux packages
-- signing / notarization
-- updater work after packaging is stable
+- macOS `.app` + `.dmg` packaging is implemented and manually verified
+- Windows MSI / NSIS packaging commands are implemented through `cargo-packager`
+- Linux `.deb` / AppImage / Pacman packaging commands are implemented through `cargo-packager`
+- signing / notarization hooks are configurable through environment variables and CI
+- updater work is still deferred until installers are stable
 
 See [roadmap.md](/Volumes/Data/Users/paul/development/src/github/rust-cef/roadmap.md) for the detailed matrix.
 
@@ -52,7 +54,8 @@ See [roadmap.md](/Volumes/Data/Users/paul/development/src/github/rust-cef/roadma
 - production URL policy only allows `app://` and `about:blank`
 - insecure dev-only browser flags are not enabled
 - remote debugging is not enabled
-- CEF sandbox is enabled in production builds
+- CEF sandbox is currently disabled by default
+- set `RUST_CEF_ENABLE_SANDBOX=1` only after helper entitlements and sandbox-compatible packaging are fully validated
 
 Relevant code:
 
@@ -90,8 +93,7 @@ bun install
 cd ..
 
 cargo build
-chmod +x bundle_app.sh
-./bundle_app.sh
+cargo run -p xtask -- bundle-dev-macos
 
 cargo run -- --dev
 ```
@@ -106,12 +108,40 @@ cargo run -- --dev --devtools
 ### Release Build
 
 ```bash
-cd frontend
-bun run build
-cd ..
+./package.sh --os mac
+```
 
-cargo build --release
-./bundle_app.sh
+`./package.sh --help` shows the full interface:
+
+```bash
+./package.sh --os <mac|windows|linux> [--format <name>]...
+```
+
+Supported `--format` values:
+
+- `app`
+- `dmg`
+- `wix`
+- `nsis`
+- `deb`
+- `appimage`
+- `pacman`
+
+Defaults:
+
+- `./package.sh --os mac` => `app + dmg`
+- `./package.sh --os windows` => `wix`
+- `./package.sh --os linux` => `deb + appimage + pacman`
+
+Common packaging commands:
+
+```bash
+./package.sh --os mac --format app
+./package.sh --os mac --format dmg
+./package.sh --os windows --format wix
+./package.sh --os windows --format nsis
+./package.sh --os linux --format deb
+./package.sh --os linux --format appimage --format pacman
 ```
 
 ## Frontend Bridge
@@ -144,15 +174,26 @@ The demo app in [App.tsx](/Volumes/Data/Users/paul/development/src/github/rust-c
 
 The custom scheme handler is implemented in [scheme_handler.rs](/Volumes/Data/Users/paul/development/src/github/rust-cef/src/platform/scheme_handler.rs).
 
-## Packaging Phase
+## Packaging
 
-The next phase is release engineering rather than feature work:
+Current packaging coverage:
 
-1. Windows MSI output
-2. macOS `.app` + DMG output
-3. Linux `.deb` / `.rpm` / AppImage output
-4. signing and notarization pipeline
-5. updater integration after installers are stable
+1. macOS `.app` + `.dmg` via `./package.sh --os mac`
+2. Windows MSI via `./package.sh --os windows --format wix`
+3. optional Windows NSIS installer via `./package.sh --os windows --format nsis`
+4. Linux `.deb`, AppImage, and Pacman outputs via `./package.sh --os linux`
+5. signing and notarization environment hooks plus CI matrix in [release-packaging.yml](/Volumes/Data/Users/paul/development/src/github/rust-cef/.github/workflows/release-packaging.yml)
+
+`rpm` is not listed because the installed `cargo-packager` CLI on this machine does not expose an RPM format.
+
+The current macOS packaging implementation lives in:
+
+- [crates/rust-cef-packager](/Volumes/Data/Users/paul/development/src/github/rust-cef/crates/rust-cef-packager)
+- [crates/xtask](/Volumes/Data/Users/paul/development/src/github/rust-cef/crates/xtask)
+
+The legacy shell entrypoints [bundle_app.sh](/Volumes/Data/Users/paul/development/src/github/rust-cef/bundle_app.sh) and [package.sh](/Volumes/Data/Users/paul/development/src/github/rust-cef/package.sh) now delegate to `xtask` so the bundle logic stays in one reusable Rust implementation.
+
+Packaging details and environment variables are documented in [packaging/README.md](/Volumes/Data/Users/paul/development/src/github/rust-cef/packaging/README.md).
 
 ## Verification
 
@@ -165,10 +206,10 @@ cargo test
 Manual verification is still important for:
 
 - packaged production launch
-- sandboxed production behavior
+- sandbox-enabled production behavior if you opt into `RUST_CEF_ENABLE_SANDBOX=1`
 - global shortcut firing
 - notification UX
-- installer/signing output
+- installer/signing output on native platform runners
 
 ## License
 

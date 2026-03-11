@@ -677,7 +677,10 @@ impl App {
         // app is already created above
         print_debug("DEBUG: Creating CEF settings");
         let mut settings = cef::Settings::default();
-        settings.no_sandbox = if dev_flag { 1 } else { 0 };
+        let sandbox_enabled = std::env::var("RUST_CEF_ENABLE_SANDBOX")
+            .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+            .unwrap_or(false);
+        settings.no_sandbox = if sandbox_enabled { 0 } else { 1 };
         settings.log_severity = cef::LogSeverity::INFO;
 
         #[cfg(target_os = "macos")]

@@ -639,17 +639,18 @@ Match Electron's feature set for professional desktop applications. Add advanced
 
 | Feature | Description | Rust Implementation | Priority |
 |---------|-------------|---------------------|----------|
-| Windows MSI | Windows installer output | `cargo-packager` + signing pipeline | High |
-| macOS DMG | macOS disk image output | `cargo-packager` + helper app packaging | High |
-| Linux Packages | .deb, .rpm, AppImage outputs | `cargo-packager` + distro metadata | High |
-| Signing / Notarization | Trusted execution and platform trust | platform signing tools + CI secrets | High |
+| Windows MSI ✅ | Windows installer output | `cargo-packager` via `xtask package-windows-msi` | High |
+| macOS DMG ✅ | macOS disk image output | reusable packager crate + `xtask package-macos` | High |
+| Linux Packages ✅ | .deb, AppImage, Pacman outputs | `cargo-packager` via `xtask package-linux` | High |
+| Signing / Notarization ✅ | Trusted execution and platform trust | env-driven signing hooks + CI workflow | High |
 | Auto-Updater | Background updates | `self_update` + backend | High |
 | Icon Sets ✅ | Multi-resolution icons | Image generation | Medium |
 
 **Packaging Phase Deliverables:**
-- reproducible Windows MSI build
 - reproducible macOS `.app` + DMG build
-- reproducible Linux package builds (`.deb`, `.rpm`, AppImage)
+- reusable workspace packaging library and `xtask` CLI
+- Windows MSI / NSIS packaging commands
+- Linux package commands for `.deb`, AppImage, and Pacman
 - signing/notarization configuration and CI hooks
 - updater design after installers are stable
 

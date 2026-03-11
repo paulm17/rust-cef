@@ -1,0 +1,74 @@
+name: release-packaging
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  package-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --locked
+      - name: Build frontend
+        run: |
+          cd frontend
+          bun install
+          bun run build
+      - name: Package macOS
+        run: cargo run -p xtask -- package-macos
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-cef-macos
+          path: |
+            target/release/Rust CEF.app
+            target/release/Rust CEF.dmg
+
+  package-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --locked
+      - name: Build frontend
+        shell: bash
+        run: |
+          cd frontend
+          bun install
+          bun run build
+      - name: Package Windows MSI
+        run: cargo run -p xtask -- package-windows-msi
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-cef-windows
+          path: target/release/bundle/**/*
+
+  package-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --locked
+      - name: Build frontend
+        run: |
+          cd frontend
+          bun install
+          bun run build
+      - name: Package Linux
+        run: cargo run -p xtask -- package-linux
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-cef-linux
+          path: target/release/bundle/**/*

@@ -10,7 +10,11 @@ pub struct ExternalLaunchPayload {
 }
 
 fn socket_path() -> PathBuf {
-    std::env::temp_dir().join("rust-cef-single-instance.sock")
+    let base_dir = dirs::data_local_dir()
+        .or_else(dirs::home_dir)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("rust-cef");
+    base_dir.join("single-instance.sock")
 }
 
 #[cfg(unix)]
@@ -27,6 +31,9 @@ pub enum InstanceMode {
 #[cfg(unix)]
 pub fn acquire(args: &[String]) -> Result<InstanceMode, String> {
     let socket_path = socket_path();
+    if let Some(parent) = socket_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
 
     if socket_path.exists() {
         match UnixStream::connect(&socket_path) {

@@ -394,15 +394,17 @@ function App() {
     }
   }
 
-  const handleReadClipboardImage = async () => {
-    setError('');
-    addLog('→ clipboard_read_image()');
-    try {
-      const image = await RustClipboard.readImage();
-      const blob = new Blob([image.bytes], { type: 'image/png' });
-      setClipboardImagePreview(URL.createObjectURL(blob));
-      addLog(`✓ Clipboard image read: ${image.width}x${image.height}`);
-    } catch (e) {
+	const handleReadClipboardImage = async () => {
+	    setError('');
+	    addLog('→ clipboard_read_image()');
+	    try {
+	      const image = await RustClipboard.readImage();
+	      const pngBytes = new Uint8Array(image.bytes.length);
+	      pngBytes.set(image.bytes);
+	      const blob = new Blob([pngBytes], { type: 'image/png' });
+	      setClipboardImagePreview(URL.createObjectURL(blob));
+	      addLog(`✓ Clipboard image read: ${image.width}x${image.height}`);
+	    } catch (e) {
       const msg = (e as Error).message;
       setError(msg);
       addLog(`✗ ${msg}`);
