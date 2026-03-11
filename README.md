@@ -6,16 +6,17 @@ A high-performance desktop application framework using **Rust** for the backend 
 
 ## 🚀 Features
 
-Based on the [V1 Roadmap](./roadmap.md), the following features are implemented:
+Based on the [V1 Roadmap](./roadmap.md), the following items are implemented:
 
-- **Window Management**: Native window creation, resizing, and events via `winit`.
+- **Window Management**: Native window creation, resizing, visibility, and window configuration via `winit`.
+- **Asset Loading**: Embedded frontend assets, custom scheme handling, and MIME detection for bundled builds.
 - **Modern Frontend**: Use React, Vue, Svelte, or any web framework.
-- **IPC Bridge**: Simple `window.rust.invoke()` pattern to communicate between JS and Rust.
-- **Native File Dialogs**: Open/Save files and pick folders using native OS dialogs (`rfd`).
-- **File System Operations**: Read/Write files securely from Rust.
-- **System Tray**: Custom tray icon with menus and event handling.
-- **Application Menus**: Native macOS/Windows menus via `muda`.
-- **Assets**: Embed HTML/CSS/JS features into the binary for single-file distribution.
+- **IPC Bridge**: `window.rust.invoke()` request/response bridge with JSON serialization, routing, and error handling.
+- **File System Operations**: Read/write text and binary files, check existence, list directories, and fetch metadata from Rust.
+- **Native File Dialogs**: Open files, select multiple files, save files, and pick folders using native OS dialogs (`rfd`).
+- **System Tray**: Custom tray icon, tooltip, context menu, and show/hide window integration.
+- **Application Menus**: Native menus via `muda`, including shortcuts, checkable items, separators, and dynamic updates.
+- **Message Dialogs**: Native info, warning, error, and confirmation dialogs.
 
 ## 🛠 Prerequisites
 
@@ -174,7 +175,11 @@ cargo run -- --dev
 
 ## 🏗 Roadmap
 
-See [roadmap.md](./roadmap.md) for the complete development plan, including V2 features like advanced IPC and Electron parity.
+Current V1 roadmap status:
+
+- Completed: Window Management, Asset Loading, Simple IPC Bridge, File System Operations, Native File Dialogs, System Tray, Application Menus, and Message Dialogs.
+- Not completed yet: Clipboard Access and Basic Packaging.
+- Next phase: See [roadmap.md](./roadmap.md) for the remaining V1 work and planned V2 features like advanced IPC and Electron parity.
 
 ## 📄 License
 

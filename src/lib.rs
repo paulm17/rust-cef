@@ -749,6 +749,7 @@ impl App {
         print_debug("========================================");
         let mut counter = 0;
         let mut next_cef_pump_time: Option<std::time::Instant> = Some(std::time::Instant::now());
+        let mut focused_window_id = Some(main_window_id);
         
         // We will mutate the tray icon's inner state if needed, but tray_icon::TrayIcon typically takes &self for set_icon.
         // We still need to own it or keep it alive. We'll shadow it.
@@ -923,6 +924,17 @@ impl App {
                 }
                 Event::WindowEvent {
                     window_id,
+                    event: WindowEvent::Focused(is_focused),
+                    ..
+                } => {
+                    if is_focused {
+                        focused_window_id = window_manager.find_id_by_window_id(window_id);
+                    } else if focused_window_id == window_manager.find_id_by_window_id(window_id) {
+                        focused_window_id = None;
+                    }
+                }
+                Event::WindowEvent {
+                    window_id,
                     event: WindowEvent::Moved(position),
                     ..
                 } => {
@@ -1049,6 +1061,9 @@ impl App {
                             }
                         }
                     } else if let Some(id) = found_id {
+                        if focused_window_id == Some(id) {
+                            focused_window_id = Some(main_window_id);
+                        }
                         // Close secondary window
                         if let Some(managed) = window_manager.remove(id) {
                             if let Some(browser) = managed.browser {
@@ -1117,11 +1132,19 @@ impl App {
                         } 
                         // View Menu Actions
                         else if id == muda::MenuId::new(menus::MENU_VIEW_RELOAD) {
-                            if let Some(browser) = &browser {
+                            let target_browser = focused_window_id
+                                .and_then(|window_id| window_manager.get(window_id))
+                                .and_then(|managed| managed.browser.as_ref())
+                                .or(browser.as_ref());
+                            if let Some(browser) = target_browser {
                                 browser.reload();
                             }
                         } else if id == muda::MenuId::new(menus::MENU_VIEW_DEVTOOLS) {
-                            if let Some(browser) = &browser {
+                            let target_browser = focused_window_id
+                                .and_then(|window_id| window_manager.get(window_id))
+                                .and_then(|managed| managed.browser.as_ref())
+                                .or(browser.as_ref());
+                            if let Some(browser) = target_browser {
                                 if let Some(host) = browser.host() {
                                     let window_info = cef::WindowInfo::default();
                                     let settings = cef::BrowserSettings::default();

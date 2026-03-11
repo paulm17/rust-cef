@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use cef;
 use winit::window::Window;
+use winit::window::WindowId;
 
 pub struct ManagedWindow {
     pub window: Window,
@@ -44,6 +45,12 @@ impl WindowManager {
 
     pub fn get(&self, id: usize) -> Option<&ManagedWindow> {
         self.windows.get(&id)
+    }
+
+    pub fn find_id_by_window_id(&self, window_id: WindowId) -> Option<usize> {
+        self.windows
+            .iter()
+            .find_map(|(id, managed)| (managed.window.id() == window_id).then_some(*id))
     }
 
     pub fn is_empty(&self) -> bool {
