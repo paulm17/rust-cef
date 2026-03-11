@@ -1,7 +1,7 @@
+use crate::debug_logger::print_debug;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use crate::debug_logger::print_debug;
 
 /// Incoming IPC request from the frontend.
 /// Matches the JSON shape sent by `window.rust.invoke(cmd, args)`.
@@ -51,11 +51,15 @@ impl IpcResponse {
     }
 }
 
-use winit::event_loop::EventLoopProxy;
 use std::sync::{Arc, Mutex};
+use winit::event_loop::EventLoopProxy;
 
 /// Handler function signature: takes JSON args and an optional Winit proxy, returns JSON result or error string.
-pub type CommandHandler = Box<dyn Fn(&Value, &Option<Arc<Mutex<EventLoopProxy<crate::AppEvent>>>>) -> Result<Value, String> + Send + Sync>;
+pub type CommandHandler = Box<
+    dyn Fn(&Value, &Option<Arc<Mutex<EventLoopProxy<crate::AppEvent>>>>) -> Result<Value, String>
+        + Send
+        + Sync,
+>;
 
 /// Routes IPC commands to registered handler functions.
 pub struct CommandRouter {
@@ -82,7 +86,13 @@ impl CommandRouter {
     /// Register a command handler.
     pub fn register<F>(&mut self, command: &str, handler: F)
     where
-        F: Fn(&Value, &Option<Arc<Mutex<EventLoopProxy<crate::AppEvent>>>>) -> Result<Value, String> + Send + Sync + 'static,
+        F: Fn(
+                &Value,
+                &Option<Arc<Mutex<EventLoopProxy<crate::AppEvent>>>>,
+            ) -> Result<Value, String>
+            + Send
+            + Sync
+            + 'static,
     {
         self.handlers.insert(command.to_string(), Box::new(handler));
     }
@@ -92,9 +102,9 @@ impl CommandRouter {
     pub fn dispatch(&self, raw_request: &str) -> String {
         let trimmed = raw_request.trim();
         if !trimmed.starts_with('{') {
-             // Plain string — fall back to old echo behavior behavior for legacy support or debug
-             print_debug("DEBUG: bridge::dispatch - Plain string, echoing...");
-             return format!("Rust received: {}", raw_request);
+            // Plain string — fall back to old echo behavior behavior for legacy support or debug
+            print_debug("DEBUG: bridge::dispatch - Plain string, echoing...");
+            return format!("Rust received: {}", raw_request);
         }
 
         // Parse the incoming JSON
@@ -102,10 +112,7 @@ impl CommandRouter {
             Ok(req) => req,
             Err(e) => {
                 // Not a structured IPC request — return error
-                let resp = IpcResponse::err(
-                    String::new(),
-                    format!("Invalid IPC request: {}", e),
-                );
+                let resp = IpcResponse::err(String::new(), format!("Invalid IPC request: {}", e));
                 return serde_json::to_string(&resp).unwrap_or_default();
             }
         };
@@ -137,10 +144,7 @@ impl CommandRouter {
     fn register_builtins(&mut self) {
         // greet: { name: "Paul" } → "Hello, Paul!"
         self.register("greet", |args, _| {
-            let name = args
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("World");
+            let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("World");
             Ok(serde_json::json!({
                 "message": format!("Hello, {}!", name)
             }))
@@ -162,8 +166,8 @@ impl CommandRouter {
 
         // show_message_dialog: { level, title, message } -> bool
         self.register("show_message_dialog", |args, _| {
-            let req: ShowMessageDialogRequest = serde_json::from_value(args.clone())
-                .map_err(|e| format!("Invalid args: {}", e))?;
+            let req: ShowMessageDialogRequest =
+                serde_json::from_value(args.clone()).map_err(|e| format!("Invalid args: {}", e))?;
 
             let mut dialog = rfd::MessageDialog::new()
                 .set_title(&req.title)
@@ -183,10 +187,13 @@ impl CommandRouter {
                     true
                 }
                 "confirm" => {
-                     // Confirm dialog usually has Ok/Cancel or Yes/No
-                     dialog = dialog.set_buttons(rfd::MessageButtons::OkCancel);
-                     let res = dialog.show();
-                     matches!(res, rfd::MessageDialogResult::Ok | rfd::MessageDialogResult::Yes)
+                    // Confirm dialog usually has Ok/Cancel or Yes/No
+                    dialog = dialog.set_buttons(rfd::MessageButtons::OkCancel);
+                    let res = dialog.show();
+                    matches!(
+                        res,
+                        rfd::MessageDialogResult::Ok | rfd::MessageDialogResult::Yes
+                    )
                 }
                 _ => {
                     // Default to Info
@@ -195,29 +202,59 @@ impl CommandRouter {
                     true
                 }
             };
-            
+
             Ok(serde_json::json!(result))
         });
 
         // Window creation and configuration
         self.register("create_window", crate::ipc::commands::window::create_window);
-        self.register("set_window_config", crate::ipc::commands::window::set_window_config);
-        
+        self.register(
+            "set_window_config",
+            crate::ipc::commands::window::set_window_config,
+        );
+
         // OS Integration
         self.register("set_badge_count", crate::ipc::commands::os::set_badge_count);
+        self.register("clipboard_read_text", |args, _| {
+            crate::ipc::commands::clipboard::clipboard_read_text(args)
+        });
+        self.register("clipboard_write_text", |args, _| {
+            crate::ipc::commands::clipboard::clipboard_write_text(args)
+        });
+        self.register("clipboard_clear", |args, _| {
+            crate::ipc::commands::clipboard::clipboard_clear(args)
+        });
 
         // File System Commands
-        self.register("read_file", |args, _| crate::ipc::commands::fs::read_file(args));
-        self.register("read_file_binary", |args, _| crate::ipc::commands::fs::read_file_binary(args));
-        self.register("write_file", |args, _| crate::ipc::commands::fs::write_file(args));
-        self.register("write_file_binary", |args, _| crate::ipc::commands::fs::write_file_binary(args));
+        self.register("read_file", |args, _| {
+            crate::ipc::commands::fs::read_file(args)
+        });
+        self.register("read_file_binary", |args, _| {
+            crate::ipc::commands::fs::read_file_binary(args)
+        });
+        self.register("write_file", |args, _| {
+            crate::ipc::commands::fs::write_file(args)
+        });
+        self.register("write_file_binary", |args, _| {
+            crate::ipc::commands::fs::write_file_binary(args)
+        });
         self.register("exists", |args, _| crate::ipc::commands::fs::exists(args));
-        self.register("read_dir", |args, _| crate::ipc::commands::fs::read_dir(args));
-        self.register("get_metadata", |args, _| crate::ipc::commands::fs::get_metadata(args));
+        self.register("read_dir", |args, _| {
+            crate::ipc::commands::fs::read_dir(args)
+        });
+        self.register("get_metadata", |args, _| {
+            crate::ipc::commands::fs::get_metadata(args)
+        });
 
         // Dialog Commands
-        self.register("show_open_dialog", |args, _| crate::ipc::commands::dialog::show_open_dialog(args));
-        self.register("show_save_dialog", |args, _| crate::ipc::commands::dialog::show_save_dialog(args));
-        self.register("show_pick_folder_dialog", |args, _| crate::ipc::commands::dialog::show_pick_folder_dialog(args));
+        self.register("show_open_dialog", |args, _| {
+            crate::ipc::commands::dialog::show_open_dialog(args)
+        });
+        self.register("show_save_dialog", |args, _| {
+            crate::ipc::commands::dialog::show_save_dialog(args)
+        });
+        self.register("show_pick_folder_dialog", |args, _| {
+            crate::ipc::commands::dialog::show_pick_folder_dialog(args)
+        });
     }
 }

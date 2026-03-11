@@ -6,8 +6,9 @@ use winit::{
 
 #[cfg(target_os = "macos")]
 use objc2::{
-    class, msg_send, sel,
+    class, msg_send,
     runtime::{AnyClass, AnyObject, Bool, Sel},
+    sel,
 };
 #[cfg(target_os = "macos")]
 #[cfg(target_os = "macos")]
@@ -18,24 +19,24 @@ use std::os::unix::process::CommandExt;
 use cef::{self, ImplBrowser, ImplBrowserHost, ImplFrame};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::sync::Arc;
-pub mod client;
 pub mod app;
-pub mod ipc;
-pub mod platform;
-pub mod backend;
-pub mod state;
 pub mod assets;
-pub mod tray;
-pub mod menus;
-pub mod debug_logger;
-pub mod window_manager;
+pub mod backend;
+pub mod client;
 pub mod config;
+pub mod debug_logger;
+pub mod ipc;
+pub mod menus;
+pub mod platform;
+pub mod state;
+pub mod tray;
+pub mod window_manager;
 
-use client::{IcyClient, client::ClientBuilder};
 use app::AppBuilder;
+use client::{client::ClientBuilder, IcyClient};
+use debug_logger::{init_logging, log_debug, print_debug, print_info, set_debug_mode};
 use ipc::bridge::CommandRouter;
 use platform::scheme_handler::AssetResolver;
-use debug_logger::{log_debug, print_debug, print_info, set_debug_mode};
 use window_manager::WindowManager;
 
 #[derive(Debug, Clone)]
@@ -69,14 +70,14 @@ pub enum AppEvent {
 }
 
 use std::sync::OnceLock;
-pub static EVENT_LOOP_PROXY: OnceLock<std::sync::Mutex<winit::event_loop::EventLoopProxy<AppEvent>>> = OnceLock::new();
+pub static EVENT_LOOP_PROXY: OnceLock<
+    std::sync::Mutex<winit::event_loop::EventLoopProxy<AppEvent>>,
+> = OnceLock::new();
 
 fn logical_window_bounds(window: &winit::window::Window) -> Option<config::WindowBounds> {
     let position = window.outer_position().ok()?;
     let logical_position = position.to_logical::<i32>(window.scale_factor());
-    let logical_size = window
-        .inner_size()
-        .to_logical::<u32>(window.scale_factor());
+    let logical_size = window.inner_size().to_logical::<u32>(window.scale_factor());
 
     Some(config::WindowBounds {
         x: logical_position.x,
@@ -92,6 +93,7 @@ pub struct DevConfig {
     pub command: String,
     pub url: String,
     pub cwd: Option<String>,
+    pub open_devtools: bool,
 }
 
 /// A handle to control the application (window, devtools, etc.)
@@ -111,12 +113,12 @@ impl<'a> AppHandle<'a> {
     }
 
     pub fn toggle_tools(&self) {
+        self.open_devtools();
+    }
+
+    pub fn open_devtools(&self) {
         if let Some(browser) = self.browser {
             if let Some(host) = browser.host() {
-                // If devtools are open, close them? CEF API doesn't have "is_devtools_open" easily.
-                // We'll just show them for now as "toggle" usually implies separate control or toggle.
-                // host.close_dev_tools(); // If we knew they were open.
-                // For now, always show. User can close via UI.
                 let window_info = cef::WindowInfo::default();
                 let settings = cef::BrowserSettings::default();
                 host.show_dev_tools(Some(&window_info), None, Some(&settings), None);
@@ -209,151 +211,178 @@ impl App {
     where
         F: Fn(&serde_json::Value) -> Result<serde_json::Value, String> + Send + Sync + 'static,
     {
-        self.router.register(command, move |args, _proxy| handler(args));
+        self.router
+            .register(command, move |args, _proxy| handler(args));
         self
     }
 
     pub fn run(self) -> Result<(), Box<dyn std::error::Error>> {
         // Ensure assets are provided
-        let asset_resolver = self.asset_resolver
+        let asset_resolver = self
+            .asset_resolver
             .ok_or("Asset resolver must be provided via .assets()")?;
-        
+
         // Wrap router in Arc for sharing
         let router = Arc::new(self.router);
 
-        print_debug("╔════════════════════════════════════════╗");
-        print_debug("║      APPLICATION STARTING              ║");
-        print_debug(&format!("║      PID: {}                        ║", std::process::id()));
-        print_debug("╚════════════════════════════════════════╝");
-        print_debug(&format!("DEBUG: main() started, PID: {}", std::process::id()));
+        let args: Vec<String> = std::env::args().collect();
+        let debug_flag = args.iter().any(|a| a == "--debug");
+        set_debug_mode(debug_flag);
 
-        let _ = tracing_subscriber::fmt::try_init();
-        log_debug(&format!("DEBUG: Main Process Started PID: {}", std::process::id()));
+        let dev_flag = args.iter().any(|a| a == "--dev");
+        init_logging(dev_flag, debug_flag);
+        tracing::info!(
+            pid = std::process::id(),
+            dev_mode = dev_flag,
+            debug_mode = debug_flag,
+            "application starting"
+        );
+        log_debug(&format!(
+            "DEBUG: Main Process Started PID: {}",
+            std::process::id()
+        ));
 
-        // Check for --debug flag
-        if std::env::args().any(|a| a == "--debug") {
-            set_debug_mode(true);
-        }
-
-        // Check for --dev flag
-        let dev_flag = std::env::args().any(|a| a == "--dev");
-        let is_bundle = std::env::current_exe()
-             .map_or(false, |p| p.to_string_lossy().contains(".app/Contents/MacOS"));
-        let is_subprocess = std::env::args().any(|a| a.starts_with("--type="));
+        let is_bundle = std::env::current_exe().map_or(false, |p| {
+            p.to_string_lossy().contains(".app/Contents/MacOS")
+        });
+        let is_subprocess = args.iter().any(|a| a.starts_with("--type="));
         let log_prefix = if is_subprocess { "[HELPER]" } else { "[MAIN]" };
-        
+
         print_debug(&format!("{} PID: {}", log_prefix, std::process::id()));
-        print_debug(&format!("{} Current Dir: {:?}", log_prefix, std::env::current_dir()));
+        print_debug(&format!(
+            "{} Current Dir: {:?}",
+            log_prefix,
+            std::env::current_dir()
+        ));
 
         let mut dev_process = None;
         let mut dev_target_url = None;
+        let mut dev_target_port = None;
 
         let start_url = if dev_flag && !is_bundle && !is_subprocess {
-             if let Some(config) = &self.dev_config {
-                 print_debug(&format!("{} DEBUG: Dev mode detected. Starting dev server: {}", log_prefix, config.command));
-                 
-                 // Split command into program and args
-                 let mut parts = config.command.split_whitespace();
-                 if let Some(program) = parts.next() {
-                     let mut cmd = std::process::Command::new(program);
-                     cmd.args(parts);
-                     
-                     if let Some(cwd) = &config.cwd {
-                         let absolute_cwd = std::fs::canonicalize(cwd);
-                         print_debug(&format!("{} DEBUG: Resolved CWD for dev server: {:?}", log_prefix, absolute_cwd));
-                         cmd.current_dir(cwd);
-                     }
-                     // Disable Vite/Bun opening the default system browser
-                     cmd.env("BROWSER", "none");
-                     
-                     // Explicitly inherit stdout/stderr so we can see bun output
-                     // Use piped output to avoid FD conflicts with CEF and to prefix logs
-                     cmd.stdout(std::process::Stdio::piped()); 
-                     cmd.stderr(std::process::Stdio::piped());
-                     
-                     // Set process group to 0 to create a new PGID (same as PID)
-                     // This allows us to kill the whole tree (bun -> node -> vite) later
-                     cmd.process_group(0);
+            if let Some(config) = &self.dev_config {
+                dev_target_port = parse_port_from_url(&config.url);
+                if let Some(port) = dev_target_port {
+                    kill_processes_on_port(port);
+                }
 
-                     print_debug(&format!("{} DEBUG: Spawning command: '{}' (PGID: New)", log_prefix, config.command));
+                print_debug(&format!(
+                    "{} DEBUG: Dev mode detected. Starting dev server: {}",
+                    log_prefix, config.command
+                ));
 
-                     match cmd.spawn() {
-                         Ok(mut child) => {
-                             print_debug(&format!("{} DEBUG: Dev server spawned successfully with PID: {}", log_prefix, child.id()));
-                             
-                             // Spawn threads to pipe output
-                             if let Some(stdout) = child.stdout.take() {
-                                 std::thread::spawn(move || {
-                                     use std::io::{BufRead, BufReader};
-                                     let reader = BufReader::new(stdout);
-                                     for line in reader.lines() {
-                                         if let Ok(l) = line {
-                                             print_debug(&format!("[BUN] {}", l));
-                                         }
-                                     }
-                                 });
-                             }
-                             
-                             if let Some(stderr) = child.stderr.take() {
-                                 std::thread::spawn(move || {
-                                     use std::io::{BufRead, BufReader};
-                                     let reader = BufReader::new(stderr);
-                                     for line in reader.lines() {
-                                         if let Ok(l) = line {
-                                             print_debug(&format!("[BUN ERROR] {}", l));
-                                         }
-                                     }
-                                 });
-                             }
-                             
-                             dev_process = Some(child);
-                         }
-                         Err(e) => {
-                             eprintln!("{} ERROR: FAILED TO SPAWN DEV SERVER: {}", log_prefix, e);
-                             eprintln!("{} HINT: Ensure '{}' is in your PATH and the directory 'frontend' exists.", log_prefix, program);
-                         }
-                     }
-                 }
-                
-                 // Store the target URL to load once ready
-                 dev_target_url = Some(config.url.clone());
+                // Split command into program and args
+                let mut parts = config.command.split_whitespace();
+                if let Some(program) = parts.next() {
+                    let mut cmd = std::process::Command::new(program);
+                    cmd.args(parts);
 
-                 // Create a temporary loading file
-                 let loading_html = format!("<html><body style='background:#111;color:#eee;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh'><h1>Starting Dev Server...</h1><p>Waiting for {}</p></body></html>", config.url);
-                 
-                 let temp_dir = std::env::temp_dir();
-                 let loading_path = temp_dir.join("rust_cef_loading.html");
-                 if let Err(e) = std::fs::write(&loading_path, loading_html) {
-                     eprintln!("ERROR: Failed to write loading file: {}", e);
-                     "about:blank".to_string()
-                 } else {
-                     format!("file://{}", loading_path.to_string_lossy())
-                 }
-             } else {
-                 "http://localhost:5173".to_string()
-             }
+                    if let Some(cwd) = &config.cwd {
+                        let absolute_cwd = std::fs::canonicalize(cwd);
+                        print_debug(&format!(
+                            "{} DEBUG: Resolved CWD for dev server: {:?}",
+                            log_prefix, absolute_cwd
+                        ));
+                        cmd.current_dir(cwd);
+                    }
+                    // Disable Vite/Bun opening the default system browser
+                    cmd.env("BROWSER", "none");
+
+                    // Explicitly inherit stdout/stderr so we can see bun output
+                    // Use piped output to avoid FD conflicts with CEF and to prefix logs
+                    cmd.stdout(std::process::Stdio::piped());
+                    cmd.stderr(std::process::Stdio::piped());
+
+                    // Set process group to 0 to create a new PGID (same as PID)
+                    // This allows us to kill the whole tree (bun -> node -> vite) later
+                    cmd.process_group(0);
+
+                    print_debug(&format!(
+                        "{} DEBUG: Spawning command: '{}' (PGID: New)",
+                        log_prefix, config.command
+                    ));
+
+                    match cmd.spawn() {
+                        Ok(mut child) => {
+                            tracing::info!(pid = child.id(), "{} dev server spawned", log_prefix);
+
+                            // Spawn threads to pipe output
+                            if let Some(stdout) = child.stdout.take() {
+                                std::thread::spawn(move || {
+                                    use std::io::{BufRead, BufReader};
+                                    let reader = BufReader::new(stdout);
+                                    for line in reader.lines() {
+                                        if let Ok(l) = line {
+                                            tracing::info!("[dev-server] {}", l);
+                                        }
+                                    }
+                                });
+                            }
+
+                            if let Some(stderr) = child.stderr.take() {
+                                std::thread::spawn(move || {
+                                    use std::io::{BufRead, BufReader};
+                                    let reader = BufReader::new(stderr);
+                                    for line in reader.lines() {
+                                        if let Ok(l) = line {
+                                            tracing::warn!("[dev-server] {}", l);
+                                        }
+                                    }
+                                });
+                            }
+
+                            dev_process = Some(child);
+                        }
+                        Err(e) => {
+                            tracing::error!("{} failed to spawn dev server: {}", log_prefix, e);
+                            tracing::error!(
+                                "{} ensure '{}' is in PATH and 'frontend' exists",
+                                log_prefix,
+                                program
+                            );
+                        }
+                    }
+                }
+
+                // Store the target URL to load once ready
+                dev_target_url = Some(config.url.clone());
+
+                // Create a temporary loading file
+                let loading_html = format!("<html><body style='background:#111;color:#eee;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh'><h1>Starting Dev Server...</h1><p>Waiting for {}</p></body></html>", config.url);
+
+                let temp_dir = std::env::temp_dir();
+                let loading_path = temp_dir.join("rust_cef_loading.html");
+                if let Err(e) = std::fs::write(&loading_path, loading_html) {
+                    eprintln!("ERROR: Failed to write loading file: {}", e);
+                    "about:blank".to_string()
+                } else {
+                    format!("file://{}", loading_path.to_string_lossy())
+                }
+            } else {
+                "http://localhost:5173".to_string()
+            }
         } else {
-             // Production / Fallback
-             crate::app::get_start_url()
+            // Production / Fallback
+            crate::app::get_start_url()
         };
 
         // 0. LOAD LIBRARY (MacOS specific)
         #[cfg(target_os = "macos")]
         let _loader = {
-             // ... [Logic remains same, but omitted for brevity in replace block if possible? No, must replace contiguous]
-             // I will duplicate the library loader logic to ensure correctness as I am editing a large block
+            // ... [Logic remains same, but omitted for brevity in replace block if possible? No, must replace contiguous]
+            // I will duplicate the library loader logic to ensure correctness as I am editing a large block
             if !is_subprocess {
                 print_info("Loading CEF Library (macOS)");
             }
-            
+
             // Re-check for internal flags
-             if is_subprocess {
-                 print_debug("DEBUG: Helper process detected during load");
+            if is_subprocess {
+                print_debug("DEBUG: Helper process detected during load");
             }
             if is_bundle {
-                 print_debug("DEBUG: Running in App Bundle");
+                print_debug("DEBUG: Running in App Bundle");
             } else {
-                 print_debug("DEBUG: Running in Dev/Command-line");
+                print_debug("DEBUG: Running in Dev/Command-line");
             }
 
             // If we are not in a bundle, we must lie to LibraryLoader and say we are NOT a helper
@@ -363,19 +392,19 @@ impl App {
 
             let loader = cef::library_loader::LibraryLoader::new(
                 &std::env::current_exe().expect("cannot get current exe"),
-                loader_is_helper, 
+                loader_is_helper,
             );
-            
+
             if !loader.load() {
                 // If it fails, report specifically
                 if is_subprocess {
-                     eprintln!("CRITICAL: Helper failed to load CEF library! is_bundle={} loader_is_helper={}", is_bundle, loader_is_helper);
+                    eprintln!("CRITICAL: Helper failed to load CEF library! is_bundle={} loader_is_helper={}", is_bundle, loader_is_helper);
                 } else {
-                     eprintln!("CRITICAL: Main process failed to load CEF library!");
+                    eprintln!("CRITICAL: Main process failed to load CEF library!");
                 }
                 panic!("cannot load cef library");
             }
-            
+
             print_debug("DEBUG: CEF library loaded successfully");
             loader
         };
@@ -387,10 +416,10 @@ impl App {
         // 1. PARSE ARGS & HANDLE SUBPROCESSES
         print_debug("DEBUG: Parsing command line arguments");
         let args = cef::args::Args::new();
-        
+
         // Create App instance early to handle subprocesses
         print_debug("DEBUG: Creating App instance");
-        let mut app = AppBuilder::build(asset_resolver.clone()); 
+        let mut app = AppBuilder::build(asset_resolver.clone());
         if !is_subprocess {
             print_info("App instance created");
         }
@@ -399,17 +428,17 @@ impl App {
             print_debug("========================================");
             print_debug("DEBUG: SUBPROCESS DETECTED");
             log_debug("DEBUG: SUBPROCESS DETECTED");
-            
+
             print_debug("DEBUG: Executing subprocess with cef::execute_process");
             log_debug("DEBUG: Executing subprocess with cef::execute_process");
             let code = cef::execute_process(
                 Some(args.as_main_args()),
                 Some(&mut app),
-                std::ptr::null_mut()
+                std::ptr::null_mut(),
             );
             print_debug(&format!("DEBUG: Subprocess exiting with code: {}", code));
             log_debug(&format!("DEBUG: Subprocess exiting with code: {}", code));
-            std::process::exit(code as i32);    
+            std::process::exit(code as i32);
         }
 
         print_debug("========================================");
@@ -429,16 +458,18 @@ impl App {
         };
 
         #[cfg(not(target_os = "macos"))]
-        let event_loop = EventLoopBuilder::<AppEvent>::with_user_event().build().unwrap();
+        let event_loop = EventLoopBuilder::<AppEvent>::with_user_event()
+            .build()
+            .unwrap();
 
         let proxy = event_loop.create_proxy();
         router.set_proxy(proxy.clone());
         let _ = EVENT_LOOP_PROXY.set(std::sync::Mutex::new(proxy.clone()));
-        
+
         let mut window_manager = WindowManager::new();
         let mut config_manager = config::ConfigManager::new();
         let workspace_config = config::WorkspaceConfig::load();
-        
+
         if let Some(badges) = &workspace_config.badges {
             if let Some(taskbar_path) = &badges.taskbar {
                 crate::tray::set_tray_icon_path(taskbar_path.clone());
@@ -446,7 +477,7 @@ impl App {
         }
 
         print_debug("DEBUG: Creating main window");
-        
+
         let mut main_window_builder = WindowBuilder::new()
             .with_title(&self.title)
             .with_visible(!self.start_hidden)
@@ -493,10 +524,9 @@ impl App {
         if let Ok(exe_path) = std::env::current_exe() {
             print_debug(&format!("DEBUG: Exe path: {:?}", exe_path));
             if let Some(parent) = exe_path.parent() {
-                let framework_path = parent.join("../Frameworks/Chromium Embedded Framework.framework");
-                let resources_path = parent; 
-
-
+                let framework_path =
+                    parent.join("../Frameworks/Chromium Embedded Framework.framework");
+                let resources_path = parent;
 
                 print_debug(&format!("DEBUG: Framework path: {:?}", framework_path));
                 print_debug(&format!("DEBUG: Resources path: {:?}", resources_path));
@@ -511,20 +541,29 @@ impl App {
                 // On macOS, we need to handle two cases:
                 // 1. Packaged (.app)
                 // 2. Dev (cargo run)
-                
+
                 let is_bundle = exe_path.to_string_lossy().contains(".app/Contents/MacOS");
                 if is_bundle {
-                    print_debug("DEBUG: Detected App Bundle environment. Using explicit Helper path.");
-                    let helper_path = parent.join("../Frameworks/Rust CEF Helper.app/Contents/MacOS/Rust CEF Helper");
+                    print_debug(
+                        "DEBUG: Detected App Bundle environment. Using explicit Helper path.",
+                    );
+                    let helper_path = parent
+                        .join("../Frameworks/Rust CEF Helper.app/Contents/MacOS/Rust CEF Helper");
                     if helper_path.exists() {
-                         print_debug(&format!("DEBUG: Found helper at {:?}", helper_path));
-                         settings.browser_subprocess_path = cef::CefString::from(helper_path.to_str().unwrap());
+                        print_debug(&format!("DEBUG: Found helper at {:?}", helper_path));
+                        settings.browser_subprocess_path =
+                            cef::CefString::from(helper_path.to_str().unwrap());
                     } else {
-                         eprintln!("WARNING: Helper not found at {:?}, falling back to auto-discovery", helper_path);
+                        eprintln!(
+                            "WARNING: Helper not found at {:?}, falling back to auto-discovery",
+                            helper_path
+                        );
                     }
                 } else {
-                     print_debug("DEBUG: Detected Development environment. Using Self as subprocess.");
-                     settings.browser_subprocess_path =
+                    print_debug(
+                        "DEBUG: Detected Development environment. Using Self as subprocess.",
+                    );
+                    settings.browser_subprocess_path =
                         cef::CefString::from(exe_path.to_str().unwrap());
                 }
 
@@ -532,15 +571,13 @@ impl App {
                 if let Some(mut cache_dir) = std::env::temp_dir().canonicalize().ok() {
                     cache_dir.push("rust-cef-cache");
                     print_debug(&format!("DEBUG: Cache path: {:?}", cache_dir));
-                    settings.root_cache_path =
-                        cef::CefString::from(cache_dir.to_str().unwrap());
+                    settings.root_cache_path = cef::CefString::from(cache_dir.to_str().unwrap());
                 } else {
-                     settings.root_cache_path =
+                    settings.root_cache_path =
                         cef::CefString::from(parent.join("cef_cache").to_str().unwrap());
                 }
             }
         }
-
 
         let init_result = cef::initialize(
             Some(args.as_main_args()),
@@ -570,26 +607,31 @@ impl App {
             print_debug("DEBUG: Calling init_for_nsapp()");
             app_menu_handles.menu.init_for_nsapp();
             print_debug("DEBUG: Menu initialized for NSApp");
-            
+
             if let Some(badges) = &workspace_config.badges {
                 if let Some(dock_path) = &badges.dock {
-                    use objc::{class, msg_send, sel, sel_impl};
                     use objc::runtime::Object;
+                    use objc::{class, msg_send, sel, sel_impl};
                     use std::ffi::CString;
-                    
-                    print_debug(&format!("DEBUG: Setting macOS Dock icon from: {}", dock_path));
-                    
+
+                    print_debug(&format!(
+                        "DEBUG: Setting macOS Dock icon from: {}",
+                        dock_path
+                    ));
+
                     let c_path = CString::new(dock_path.clone()).unwrap_or_default();
                     #[allow(unexpected_cfgs)]
                     unsafe {
                         let ns_string_class = class!(NSString);
                         let ns_path: *mut Object = msg_send![ns_string_class, alloc];
-                        let ns_path: *mut Object = msg_send![ns_path, initWithUTF8String: c_path.as_ptr()];
-                        
+                        let ns_path: *mut Object =
+                            msg_send![ns_path, initWithUTF8String: c_path.as_ptr()];
+
                         let ns_image_class = class!(NSImage);
                         let ns_image: *mut Object = msg_send![ns_image_class, alloc];
-                        let ns_image: *mut Object = msg_send![ns_image, initWithContentsOfFile: ns_path];
-                        
+                        let ns_image: *mut Object =
+                            msg_send![ns_image, initWithContentsOfFile: ns_path];
+
                         if !ns_image.is_null() {
                             let ns_app_class = class!(NSApplication);
                             let app: *mut Object = msg_send![ns_app_class, sharedApplication];
@@ -603,16 +645,16 @@ impl App {
                 }
             }
         }
-        
+
         let mut browser_settings = cef::BrowserSettings::default();
         browser_settings.local_storage = cef::State::DISABLED;
-        
+
         print_debug(&format!("DEBUG: Start URL: {}", start_url));
 
         print_debug("DEBUG: Creating IcyClient");
         // Pass the proxy to the client
         let (_client, client_handlers) = IcyClient::new(router.clone(), Some(proxy.clone()));
-        
+
         print_debug("DEBUG: Building Client from handlers");
         let mut client = ClientBuilder::build(client_handlers);
         print_debug("DEBUG: Client built");
@@ -620,7 +662,7 @@ impl App {
         print_debug("DEBUG: Creating WindowInfo");
         let window_info = {
             let mut info = cef::WindowInfo::default();
-            
+
             #[cfg(target_os = "macos")]
             {
                 print_debug("DEBUG: Configuring window for macOS");
@@ -650,7 +692,7 @@ impl App {
                 info.bounds.height = size.height as i32;
                 info.bounds.x = 0;
                 info.bounds.y = 0;
-                
+
                 #[cfg(target_os = "windows")]
                 {
                     if let Ok(handle) = managed.window.window_handle() {
@@ -674,11 +716,11 @@ impl App {
         );
 
         if browser.is_none() {
-           panic!("Browser creation failed!");
+            panic!("Browser creation failed!");
         }
-        
+
         if let Some(b) = &browser {
-             window_manager.attach_browser(main_window_id, b.clone());
+            window_manager.attach_browser(main_window_id, b.clone());
         }
 
         print_debug("DEBUG: ✓ Browser created successfully");
@@ -700,32 +742,36 @@ impl App {
         if let Some(target_url) = dev_target_url {
             if let Some(browser) = &browser {
                 let browser_clone = browser.clone();
-                print_debug("DEBUG: Spawning background thread to wait for dev server...");
+                tracing::info!(url = %target_url, "waiting for dev server before navigating");
                 std::thread::spawn(move || {
                     if let Ok(url) = url::Url::parse(&target_url) {
                         if let Some(port) = url.port() {
-                           print_debug(&format!("DEBUG: Polling port {}...", port));
-                           let start = std::time::Instant::now();
-                           let timeout = std::time::Duration::from_secs(60); 
-                           
-                           loop {
-                               if std::net::TcpStream::connect(("localhost", port)).is_ok() {
-                                   print_info(&format!("Port {} ready! Loading URL: {}", port, target_url));
-                                   std::thread::sleep(std::time::Duration::from_millis(200));
-                                   if let Some(frame) = browser_clone.main_frame() {
-                                       print_debug("DEBUG: Frame found, loading URL...");
-                                       frame.load_url(Some(&cef::CefString::from(target_url.as_str())));
-                                   } else {
-                                       eprintln!("ERROR: Could not get main frame to load URL!");
-                                   }
-                                   break;
-                               }
-                               if start.elapsed() > timeout {
-                                   eprintln!("WARNING: Timeout waiting for dev server.");
-                                   break;
-                               }
-                               std::thread::sleep(std::time::Duration::from_millis(250));
-                           }
+                            let start = std::time::Instant::now();
+                            let timeout = std::time::Duration::from_secs(60);
+
+                            loop {
+                                if std::net::TcpStream::connect(("localhost", port)).is_ok() {
+                                    tracing::info!(port, url = %target_url, "dev server is ready; loading target URL");
+                                    std::thread::sleep(std::time::Duration::from_millis(200));
+                                    if let Some(frame) = browser_clone.main_frame() {
+                                        tracing::debug!("loading target URL in main frame");
+                                        frame.load_url(Some(&cef::CefString::from(
+                                            target_url.as_str(),
+                                        )));
+                                    } else {
+                                        tracing::error!("could not get main frame to load dev URL");
+                                    }
+                                    break;
+                                }
+                                if start.elapsed() > timeout {
+                                    tracing::warn!(url = %target_url, "timeout waiting for dev server");
+                                    break;
+                                }
+                                std::thread::sleep(std::time::Duration::from_millis(250));
+                            }
+                        } else if let Some(frame) = browser_clone.main_frame() {
+                            tracing::info!(url = %target_url, "dev URL has no port; loading directly");
+                            frame.load_url(Some(&cef::CefString::from(target_url.as_str())));
                         }
                     }
                 });
@@ -735,10 +781,15 @@ impl App {
         // Extract on_ready callback to move into loop
         let on_ready_callback = self.on_ready;
         let on_exit_callback = self.on_exit;
+        let open_devtools_on_ready = self
+            .dev_config
+            .as_ref()
+            .map(|config| config.open_devtools)
+            .unwrap_or(false);
 
         // 5. RUN THE EVENT LOOP
         print_debug("========================================");
-        
+
         // Fix winit crash on macOS due to missing selector
         #[cfg(target_os = "macos")]
         unsafe {
@@ -750,14 +801,14 @@ impl App {
         let mut counter = 0;
         let mut next_cef_pump_time: Option<std::time::Instant> = Some(std::time::Instant::now());
         let mut focused_window_id = Some(main_window_id);
-        
+
         // We will mutate the tray icon's inner state if needed, but tray_icon::TrayIcon typically takes &self for set_icon.
         // We still need to own it or keep it alive. We'll shadow it.
         let tray_icon = _tray_icon;
 
         let _ = event_loop.run(move |event, window_target| {
             // KEEP HANDLES ALIVE: Move them into the closure
-            let _ = &app_menu_handles; 
+            let _ = &app_menu_handles;
             let _ = &tray_menu;
             let _ = &tray_icon;
 
@@ -766,24 +817,30 @@ impl App {
                     if delay_ms <= 0 {
                         next_cef_pump_time = Some(std::time::Instant::now());
                     } else {
-                        next_cef_pump_time = Some(std::time::Instant::now() + std::time::Duration::from_millis(delay_ms as u64));
+                        next_cef_pump_time = Some(
+                            std::time::Instant::now()
+                                + std::time::Duration::from_millis(delay_ms as u64),
+                        );
                     }
                 }
                 // Handle ContentLoaded event: Show window only when content is ready
                 Event::UserEvent(AppEvent::ContentLoaded) => {
-                     print_info("ContentLoaded event received. Showing window.");
-                     // Now trigger the on_ready callback (which shows window)
-                     if let Some(callback) = &on_ready_callback {
-                         if let Some(managed) = window_manager.get(main_window_id) {
-                             if !managed.window.is_visible().unwrap_or(false) {
-                                  let handle = AppHandle {
-                                      window: &managed.window,
-                                      browser: managed.browser.as_ref(),
-                                  };
-                                  callback(&handle);
-                             }
-                         }
-                     }
+                    print_info("ContentLoaded event received. Showing window.");
+                    // Now trigger the on_ready callback (which shows window)
+                    if let Some(callback) = &on_ready_callback {
+                        if let Some(managed) = window_manager.get(main_window_id) {
+                            if !managed.window.is_visible().unwrap_or(false) {
+                                let handle = AppHandle {
+                                    window: &managed.window,
+                                    browser: managed.browser.as_ref(),
+                                };
+                                if open_devtools_on_ready {
+                                    handle.open_devtools();
+                                }
+                                callback(&handle);
+                            }
+                        }
+                    }
                 }
                 Event::UserEvent(AppEvent::CreateWindow(config)) => {
                     print_info(&format!("Received CreateWindow request: {}", config.url));
@@ -807,11 +864,12 @@ impl App {
                         .with_resizable(config.resizable);
 
                     if let Some(bounds) = &restored_bounds {
-                        builder = builder.with_position(winit::dpi::LogicalPosition::new(bounds.x, bounds.y));
+                        builder = builder
+                            .with_position(winit::dpi::LogicalPosition::new(bounds.x, bounds.y));
                     } else if let (Some(x), Some(y)) = (config.x, config.y) {
                         builder = builder.with_position(winit::dpi::LogicalPosition::new(x, y));
                     }
-                        
+
                     if let Some(frameless) = config.frameless {
                         builder = builder.with_decorations(!frameless);
                     }
@@ -819,18 +877,25 @@ impl App {
                         builder = builder.with_transparent(transparent);
                     }
                     if let Some(always_on_top) = config.always_on_top {
-                        builder = builder.with_window_level(if always_on_top { WindowLevel::AlwaysOnTop } else { WindowLevel::Normal });
+                        builder = builder.with_window_level(if always_on_top {
+                            WindowLevel::AlwaysOnTop
+                        } else {
+                            WindowLevel::Normal
+                        });
                     }
                     if let Some(kiosk) = config.kiosk {
                         if kiosk {
-                            builder = builder.with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+                            builder = builder
+                                .with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
                         }
                     }
                     if let Some(icon_bytes) = &config.icon {
                         if let Ok(img) = image::load_from_memory(icon_bytes) {
                             let rgba = img.into_rgba8();
                             let (width, height) = rgba.dimensions();
-                            if let Ok(icon) = winit::window::Icon::from_rgba(rgba.into_raw(), width, height) {
+                            if let Ok(icon) =
+                                winit::window::Icon::from_rgba(rgba.into_raw(), width, height)
+                            {
                                 builder = builder.with_window_icon(Some(icon));
                             }
                         }
@@ -841,7 +906,7 @@ impl App {
                     let new_id = window_manager.insert(new_window, config.persist_key.clone());
 
                     let mut info = cef::WindowInfo::default();
-                    
+
                     if let Some(managed) = window_manager.get(new_id) {
                         #[cfg(target_os = "macos")]
                         if let Ok(handle) = managed.window.window_handle() {
@@ -860,7 +925,7 @@ impl App {
                         let size = managed.window.inner_size();
                         info.bounds.width = size.width as i32;
                         info.bounds.height = size.height as i32;
-                        
+
                         #[cfg(target_os = "windows")]
                         if let Ok(handle) = managed.window.window_handle() {
                             if let RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
@@ -871,7 +936,8 @@ impl App {
 
                     // Create the backend client handler for this new browser instance
                     // Note: Ideally we'd reuse the same IcyClient proxy setup
-                    let (_new_client, new_client_handlers) = IcyClient::new(router.clone(), Some(proxy.clone()));
+                    let (_new_client, new_client_handlers) =
+                        IcyClient::new(router.clone(), Some(proxy.clone()));
                     let mut new_client_handler = ClientBuilder::build(new_client_handlers);
 
                     let new_browser = cef::browser_host_create_browser_sync(
@@ -884,10 +950,10 @@ impl App {
                     );
 
                     if let Some(b) = new_browser {
-                         window_manager.attach_browser(new_id, b.clone());
-                         if let Some(host) = b.host() {
-                              host.was_resized();
-                         }
+                        window_manager.attach_browser(new_id, b.clone());
+                        if let Some(host) = b.host() {
+                            host.was_resized();
+                        }
                     }
                 }
                 Event::UserEvent(AppEvent::SetDecorations(id_opt, show)) => {
@@ -899,7 +965,11 @@ impl App {
                 Event::UserEvent(AppEvent::SetAlwaysOnTop(id_opt, always_on_top)) => {
                     let target_id = id_opt.unwrap_or(main_window_id);
                     if let Some(managed) = window_manager.get(target_id) {
-                        managed.window.set_window_level(if always_on_top { WindowLevel::AlwaysOnTop } else { WindowLevel::Normal });
+                        managed.window.set_window_level(if always_on_top {
+                            WindowLevel::AlwaysOnTop
+                        } else {
+                            WindowLevel::Normal
+                        });
                     }
                 }
                 Event::UserEvent(AppEvent::SetWindowIcon(id_opt, icon_opt)) => {
@@ -912,14 +982,20 @@ impl App {
                     let target_id = id_opt.unwrap_or(main_window_id);
                     if let Some(managed) = window_manager.get(target_id) {
                         if is_kiosk {
-                            managed.window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+                            managed
+                                .window
+                                .set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
                         } else {
                             managed.window.set_fullscreen(None);
                         }
                     }
                 }
                 Event::UserEvent(AppEvent::SetTrayBadge(count)) => {
-                    let icon = crate::tray::generate_tray_icon_with_badge(if count > 0 { Some(count) } else { None });
+                    let icon = crate::tray::generate_tray_icon_with_badge(if count > 0 {
+                        Some(count)
+                    } else {
+                        None
+                    });
                     let _ = tray_icon.set_icon(Some(icon));
                 }
                 Event::WindowEvent {
@@ -938,100 +1014,120 @@ impl App {
                     event: WindowEvent::Moved(position),
                     ..
                 } => {
-                     let mut main_bounds = None;
-                     let mut child_bounds = None;
-                     for (id, managed) in window_manager.windows_iter() {
-                         if managed.window.id() == window_id {
-                              if *id == main_window_id {
-                                   let log_pos = position.to_logical::<i32>(managed.window.scale_factor());
-                                   let log_size = managed.window.inner_size().to_logical::<u32>(managed.window.scale_factor());
-                                   main_bounds = Some(config::WindowBounds {
-                                       x: log_pos.x,
-                                       y: log_pos.y,
-                                       width: log_size.width,
-                                       height: log_size.height,
-                                   });
-                              } else if let Some(persist_key) = &managed.persist_key {
-                                   let log_pos = position.to_logical::<i32>(managed.window.scale_factor());
-                                   let log_size = managed.window.inner_size().to_logical::<u32>(managed.window.scale_factor());
-                                   child_bounds = Some((
-                                       persist_key.clone(),
-                                       config::WindowBounds {
-                                           x: log_pos.x,
-                                           y: log_pos.y,
-                                           width: log_size.width,
-                                           height: log_size.height,
-                                       },
-                                   ));
-                              }
-                              break;
-                         }
-                     }
-                     if let Some(bounds) = main_bounds {
-                         config_manager.update_main_window_bounds(bounds.x, bounds.y, bounds.width, bounds.height);
-                         config_manager.save();
-                     }
-                     if let Some((persist_key, bounds)) = child_bounds {
-                         config_manager.update_child_window_bounds(
-                             persist_key,
-                             bounds.x,
-                             bounds.y,
-                             bounds.width,
-                             bounds.height,
-                         );
-                         config_manager.save();
-                     }
+                    let mut main_bounds = None;
+                    let mut child_bounds = None;
+                    for (id, managed) in window_manager.windows_iter() {
+                        if managed.window.id() == window_id {
+                            if *id == main_window_id {
+                                let log_pos =
+                                    position.to_logical::<i32>(managed.window.scale_factor());
+                                let log_size = managed
+                                    .window
+                                    .inner_size()
+                                    .to_logical::<u32>(managed.window.scale_factor());
+                                main_bounds = Some(config::WindowBounds {
+                                    x: log_pos.x,
+                                    y: log_pos.y,
+                                    width: log_size.width,
+                                    height: log_size.height,
+                                });
+                            } else if let Some(persist_key) = &managed.persist_key {
+                                let log_pos =
+                                    position.to_logical::<i32>(managed.window.scale_factor());
+                                let log_size = managed
+                                    .window
+                                    .inner_size()
+                                    .to_logical::<u32>(managed.window.scale_factor());
+                                child_bounds = Some((
+                                    persist_key.clone(),
+                                    config::WindowBounds {
+                                        x: log_pos.x,
+                                        y: log_pos.y,
+                                        width: log_size.width,
+                                        height: log_size.height,
+                                    },
+                                ));
+                            }
+                            break;
+                        }
+                    }
+                    if let Some(bounds) = main_bounds {
+                        config_manager.update_main_window_bounds(
+                            bounds.x,
+                            bounds.y,
+                            bounds.width,
+                            bounds.height,
+                        );
+                        config_manager.save();
+                    }
+                    if let Some((persist_key, bounds)) = child_bounds {
+                        config_manager.update_child_window_bounds(
+                            persist_key,
+                            bounds.x,
+                            bounds.y,
+                            bounds.width,
+                            bounds.height,
+                        );
+                        config_manager.save();
+                    }
                 }
                 Event::WindowEvent {
                     window_id,
                     event: WindowEvent::Resized(size),
                     ..
                 } => {
-                     let mut main_bounds = None;
-                     let mut child_bounds = None;
-                     // Match window_id against our managed windows
-                     for (id, managed) in window_manager.windows_iter() {
-                          if managed.window.id() == window_id {
-                               if *id == main_window_id {
-                                    if let Ok(pos) = managed.window.outer_position() {
-                                        let log_pos = pos.to_logical::<i32>(managed.window.scale_factor());
-                                        let log_size = size.to_logical::<u32>(managed.window.scale_factor());
-                                        main_bounds = Some(config::WindowBounds {
-                                            x: log_pos.x,
-                                            y: log_pos.y,
-                                            width: log_size.width,
-                                            height: log_size.height,
-                                        });
-                                    }
-                               } else if let Some(persist_key) = &managed.persist_key {
-                                    if let Some(bounds) = logical_window_bounds(&managed.window) {
-                                        child_bounds = Some((persist_key.clone(), bounds));
-                                    }
-                               }
-                               
-                               if let Some(browser) = &managed.browser {
-                                   if let Some(host) = browser.host() {
-                                       host.was_resized();
-                                   }
-                               }
-                               break;
-                          }
-                     }
-                     
-                     if let Some(bounds) = main_bounds {
-                         config_manager.update_main_window_bounds(bounds.x, bounds.y, bounds.width, bounds.height);
-                         config_manager.save();
-                     }
-                     if let Some((persist_key, bounds)) = child_bounds {
-                         config_manager.update_child_window_bounds(
-                             persist_key,
-                             bounds.x,
-                             bounds.y,
-                             bounds.width,
-                             bounds.height,
-                         );
-                         config_manager.save();
-                     }
+                    let mut main_bounds = None;
+                    let mut child_bounds = None;
+                    // Match window_id against our managed windows
+                    for (id, managed) in window_manager.windows_iter() {
+                        if managed.window.id() == window_id {
+                            if *id == main_window_id {
+                                if let Ok(pos) = managed.window.outer_position() {
+                                    let log_pos =
+                                        pos.to_logical::<i32>(managed.window.scale_factor());
+                                    let log_size =
+                                        size.to_logical::<u32>(managed.window.scale_factor());
+                                    main_bounds = Some(config::WindowBounds {
+                                        x: log_pos.x,
+                                        y: log_pos.y,
+                                        width: log_size.width,
+                                        height: log_size.height,
+                                    });
+                                }
+                            } else if let Some(persist_key) = &managed.persist_key {
+                                if let Some(bounds) = logical_window_bounds(&managed.window) {
+                                    child_bounds = Some((persist_key.clone(), bounds));
+                                }
+                            }
+
+                            if let Some(browser) = &managed.browser {
+                                if let Some(host) = browser.host() {
+                                    host.was_resized();
+                                }
+                            }
+                            break;
+                        }
+                    }
+
+                    if let Some(bounds) = main_bounds {
+                        config_manager.update_main_window_bounds(
+                            bounds.x,
+                            bounds.y,
+                            bounds.width,
+                            bounds.height,
+                        );
+                        config_manager.save();
+                    }
+                    if let Some((persist_key, bounds)) = child_bounds {
+                        config_manager.update_child_window_bounds(
+                            persist_key,
+                            bounds.x,
+                            bounds.y,
+                            bounds.width,
+                            bounds.height,
+                        );
+                        config_manager.save();
+                    }
                 }
                 Event::WindowEvent {
                     window_id,
@@ -1044,17 +1140,17 @@ impl App {
                     let mut found_id = None;
                     for (id, managed) in window_manager.windows_iter() {
                         if managed.window.id() == window_id {
-                             found_id = Some(*id);
-                             if *id == main_window_id {
-                                 is_main = true;
-                             }
-                             break;
+                            found_id = Some(*id);
+                            if *id == main_window_id {
+                                is_main = true;
+                            }
+                            break;
                         }
                     }
 
                     if is_main {
                         if dev_flag {
-                             window_target.exit();
+                            window_target.exit();
                         } else {
                             if let Some(managed) = window_manager.get(main_window_id) {
                                 managed.window.set_visible(false);
@@ -1074,45 +1170,58 @@ impl App {
                         }
                     }
                 }
-                    Event::LoopExiting => {
-                     // Kill the dev process and its children (process group) FIRST
-                     // This ensures that even if CEF shutdown crashes, we don't leave zombie processes
-                     if let Some(mut child) = dev_process.take() {
-                         let pid = child.id();
-                         print_debug(&format!("DEBUG: Killing dev server process group (PGID: {})", pid));
-                         
-                         // Try to kill the process group (-PID) using libc::kill
-                         unsafe {
-                             let pgid = -(pid as i32);
-                             print_debug(&format!("DEBUG: Sending SIGTERM to PGID {}", pgid));
-                             let ret = libc::kill(pgid, libc::SIGTERM);
-                             if ret != 0 {
-                                 print_debug(&format!("DEBUG: Failed to send SIGTERM: {}", std::io::Error::last_os_error()));
-                             } else {
-                                 // Give the process group a brief moment to shut down gracefully
-                                 std::thread::sleep(std::time::Duration::from_millis(50));
-                                 
-                                 // Escalate to SIGKILL to ensure the process group is dead
-                                 print_debug(&format!("DEBUG: Escalating to SIGKILL to PGID {}", pgid));
-                                 let _ = libc::kill(pgid, libc::SIGKILL);
-                             }
-                         }
-                             
-                         // Also try normal kill as fallback
-                         let _ = child.kill();
-                         let _ = child.wait();
-                     }
+                Event::LoopExiting => {
+                    // Kill the dev process and its children (process group) FIRST
+                    // This ensures that even if CEF shutdown crashes, we don't leave zombie processes
+                    if let Some(mut child) = dev_process.take() {
+                        let pid = child.id();
+                        print_debug(&format!(
+                            "DEBUG: Killing dev server process group (PGID: {})",
+                            pid
+                        ));
 
-                     if let Some(callback) = &on_exit_callback {
-                         print_debug("DEBUG: Executing on_exit callback");
-                         callback();
-                     }
-                     
-                     config_manager.save();
+                        // Try to kill the process group (-PID) using libc::kill
+                        unsafe {
+                            let pgid = -(pid as i32);
+                            print_debug(&format!("DEBUG: Sending SIGTERM to PGID {}", pgid));
+                            let ret = libc::kill(pgid, libc::SIGTERM);
+                            if ret != 0 {
+                                print_debug(&format!(
+                                    "DEBUG: Failed to send SIGTERM: {}",
+                                    std::io::Error::last_os_error()
+                                ));
+                            } else {
+                                // Give the process group a brief moment to shut down gracefully
+                                std::thread::sleep(std::time::Duration::from_millis(50));
 
-                     print_debug("DEBUG: Event loop exiting, shutting down CEF");
-                     cef::shutdown();
-                     print_debug("DEBUG: CEF shutdown complete");
+                                // Escalate to SIGKILL to ensure the process group is dead
+                                print_debug(&format!(
+                                    "DEBUG: Escalating to SIGKILL to PGID {}",
+                                    pgid
+                                ));
+                                let _ = libc::kill(pgid, libc::SIGKILL);
+                            }
+                        }
+
+                        // Also try normal kill as fallback
+                        let _ = child.kill();
+                        let _ = child.wait();
+                    }
+
+                    if let Some(port) = dev_target_port {
+                        kill_processes_on_port(port);
+                    }
+
+                    if let Some(callback) = &on_exit_callback {
+                        print_debug("DEBUG: Executing on_exit callback");
+                        callback();
+                    }
+
+                    config_manager.save();
+
+                    print_debug("DEBUG: Event loop exiting, shutting down CEF");
+                    cef::shutdown();
+                    print_debug("DEBUG: CEF shutdown complete");
                 }
                 Event::AboutToWait => {
                     // Handle Menu Events
@@ -1122,14 +1231,14 @@ impl App {
                             window_target.exit();
                         } else if id == muda::MenuId::new(tray::MENU_ITEM_SHOW_HIDE_ID) {
                             if let Some(managed) = window_manager.get(main_window_id) {
-                                 if managed.window.is_visible().unwrap_or(false) {
+                                if managed.window.is_visible().unwrap_or(false) {
                                     managed.window.set_visible(false);
-                                 } else {
+                                } else {
                                     managed.window.set_visible(true);
                                     managed.window.focus_window();
-                                 }
+                                }
                             }
-                        } 
+                        }
                         // View Menu Actions
                         else if id == muda::MenuId::new(menus::MENU_VIEW_RELOAD) {
                             let target_browser = focused_window_id
@@ -1148,26 +1257,40 @@ impl App {
                                 if let Some(host) = browser.host() {
                                     let window_info = cef::WindowInfo::default();
                                     let settings = cef::BrowserSettings::default();
-                                    host.show_dev_tools(Some(&window_info), None, Some(&settings), None);
+                                    host.show_dev_tools(
+                                        Some(&window_info),
+                                        None,
+                                        Some(&settings),
+                                        None,
+                                    );
                                 }
                             }
-                        } 
+                        }
                         // Dynamic Counter
                         else if id == muda::MenuId::new(menus::MENU_VIEW_COUNTER) {
-                             counter += 1;
-                             eprintln!("DEBUG: Counter incremented to {}", counter);
-                             app_menu_handles.view_counter_item.set_text(format!("Counter: {}", counter));
+                            counter += 1;
+                            eprintln!("DEBUG: Counter incremented to {}", counter);
+                            app_menu_handles
+                                .view_counter_item
+                                .set_text(format!("Counter: {}", counter));
                         }
                         // Always on Top
                         else if id == muda::MenuId::new(menus::MENU_WINDOW_ALWAYS_ON_TOP) {
-                             if let Some(managed) = window_manager.get(main_window_id) {
-                                 let current = app_menu_handles.window_always_on_top_item.is_checked();
-                                 let new_state = !current;
-                                 managed.window.set_window_level(if new_state { WindowLevel::AlwaysOnTop } else { WindowLevel::Normal });
-                                 app_menu_handles.window_always_on_top_item.set_checked(new_state);
-                                 eprintln!("DEBUG: Always on Top toggled to {}", new_state);
-                             }
-                        } 
+                            if let Some(managed) = window_manager.get(main_window_id) {
+                                let current =
+                                    app_menu_handles.window_always_on_top_item.is_checked();
+                                let new_state = !current;
+                                managed.window.set_window_level(if new_state {
+                                    WindowLevel::AlwaysOnTop
+                                } else {
+                                    WindowLevel::Normal
+                                });
+                                app_menu_handles
+                                    .window_always_on_top_item
+                                    .set_checked(new_state);
+                                eprintln!("DEBUG: Always on Top toggled to {}", new_state);
+                            }
+                        }
                         // Dialogs
                         else if id == muda::MenuId::new(menus::MENU_DIALOG_INFO) {
                             rfd::MessageDialog::new()
@@ -1175,22 +1298,19 @@ impl App {
                                 .set_description("This is an info dialog.")
                                 .set_level(rfd::MessageLevel::Info)
                                 .show();
-                        }
-                        else if id == muda::MenuId::new(menus::MENU_DIALOG_WARNING) {
+                        } else if id == muda::MenuId::new(menus::MENU_DIALOG_WARNING) {
                             rfd::MessageDialog::new()
                                 .set_title("Warning")
                                 .set_description("This is a warning dialog.")
                                 .set_level(rfd::MessageLevel::Warning)
                                 .show();
-                        }
-                        else if id == muda::MenuId::new(menus::MENU_DIALOG_ERROR) {
+                        } else if id == muda::MenuId::new(menus::MENU_DIALOG_ERROR) {
                             rfd::MessageDialog::new()
                                 .set_title("Error")
                                 .set_description("This is an error dialog.")
                                 .set_level(rfd::MessageLevel::Error)
                                 .show();
-                        }
-                        else if id == muda::MenuId::new(menus::MENU_DIALOG_CONFIRM) {
+                        } else if id == muda::MenuId::new(menus::MENU_DIALOG_CONFIRM) {
                             let result = rfd::MessageDialog::new()
                                 .set_title("Confirmation")
                                 .set_description("Do you want to proceed?")
@@ -1198,12 +1318,11 @@ impl App {
                                 .show();
                             eprintln!("DEBUG: Confirmation result: {}", result);
                         }
-
                     }
 
                     // Handle Tray Icon Events
                     if let Ok(_event) = tray_icon::TrayIconEvent::receiver().try_recv() {
-                         // eprintln!("DEBUG: Tray event: {:?}", event);
+                        // eprintln!("DEBUG: Tray event: {:?}", event);
                     }
 
                     // Pump CEF message loop if it's time
@@ -1221,14 +1340,14 @@ impl App {
                         // We pumped, wait for CEF to schedule the next pump via on_schedule_message_pump_work
                         // But also make sure we don't completely freeze if CEF misses a cycle, max 50ms wait.
                         window_target.set_control_flow(ControlFlow::WaitUntil(
-                            std::time::Instant::now() + std::time::Duration::from_millis(50)
+                            std::time::Instant::now() + std::time::Duration::from_millis(50),
                         ));
                     } else if let Some(target) = next_cef_pump_time {
                         window_target.set_control_flow(ControlFlow::WaitUntil(target));
                     } else {
                         // CEF hasn't scheduled anything (Wait), but realistically we always set a safety net.
                         window_target.set_control_flow(ControlFlow::WaitUntil(
-                            std::time::Instant::now() + std::time::Duration::from_millis(50)  
+                            std::time::Instant::now() + std::time::Duration::from_millis(50),
                         ));
                     }
                 }
@@ -1242,13 +1361,59 @@ impl App {
     }
 }
 
+fn parse_port_from_url(url: &str) -> Option<u16> {
+    url::Url::parse(url).ok().and_then(|parsed| parsed.port())
+}
+
+fn kill_processes_on_port(port: u16) {
+    let port_selector = format!(":{port}");
+    let output = match std::process::Command::new("lsof")
+        .args(["-ti", port_selector.as_str()])
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => {
+            tracing::warn!(port, "failed to run lsof for dev-port cleanup: {}", error);
+            return;
+        }
+    };
+
+    if !output.status.success() && output.stdout.is_empty() {
+        return;
+    }
+
+    let pids: Vec<i32> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.trim().parse::<i32>().ok())
+        .collect();
+
+    if pids.is_empty() {
+        return;
+    }
+
+    tracing::warn!(port, pids = ?pids, "killing processes bound to dev port");
+
+    for pid in pids {
+        unsafe {
+            if libc::kill(pid, libc::SIGKILL) != 0 {
+                tracing::warn!(
+                    port,
+                    pid,
+                    "failed to SIGKILL dev-port owner: {}",
+                    std::io::Error::last_os_error()
+                );
+            }
+        }
+    }
+}
+
 #[cfg(target_os = "macos")]
 unsafe fn fix_winit_crash() {
     print_debug("DEBUG: Checking for winit crash condition...");
-    
+
     // Get shared application
     let app: Option<&AnyObject> = msg_send![class!(NSApplication), sharedApplication];
-    
+
     // Declare class_addMethod once for the whole function
     #[link(name = "objc", kind = "dylib")]
     extern "C" {
@@ -1264,19 +1429,21 @@ unsafe fn fix_winit_crash() {
         let cls: &AnyClass = msg_send![app, class];
         let cls_name = cls.name();
         print_debug(&format!("DEBUG: Current NSApp class: {:?}", cls_name));
-        
+
         // 1. Patch isHandlingSendEvent
         let selector = sel!(isHandlingSendEvent);
         if !cls.responds_to(selector) {
-            print_debug(&format!("DEBUG: Class {} missing isHandlingSendEvent - patching...", cls_name));
-            
+            print_debug(&format!(
+                "DEBUG: Class {} missing isHandlingSendEvent - patching...",
+                cls_name
+            ));
+
             // Define implementation: returns NO (false)
             extern "C" fn is_handling_send_event_impl(_this: &AnyObject, _cmd: Sel) -> Bool {
                 // print_debug("DEBUG: Shim isHandlingSendEvent called!"); // Too noisy
                 Bool::NO
             }
-            
-            
+
             let types = std::ffi::CString::new("B@:").unwrap();
             let success = class_addMethod(
                 cls,
@@ -1284,24 +1451,27 @@ unsafe fn fix_winit_crash() {
                 is_handling_send_event_impl as *const _,
                 types.as_ptr(),
             );
-            
+
             if success.as_bool() {
                 print_debug("DEBUG: Patched isHandlingSendEvent successfully!");
             } else {
                 print_debug("DEBUG: Failed to patch isHandlingSendEvent!");
             }
         } else {
-             // eprintln!("DEBUG: Class {} already has isHandlingSendEvent", cls_name);
+            // eprintln!("DEBUG: Class {} already has isHandlingSendEvent", cls_name);
         }
 
         // 2. Patch setHandlingSendEvent:
         let set_selector = sel!(setHandlingSendEvent:);
         if !cls.responds_to(set_selector) {
-            print_debug(&format!("DEBUG: Class {} missing setHandlingSendEvent: - patching...", cls_name));
+            print_debug(&format!(
+                "DEBUG: Class {} missing setHandlingSendEvent: - patching...",
+                cls_name
+            ));
 
             // Define implementation: accepts BOOL, returns void
             extern "C" fn set_handling_send_event_impl(_this: &AnyObject, _cmd: Sel, _val: Bool) {
-                // print_debug("DEBUG: Shim setHandlingSendEvent: called!"); 
+                // print_debug("DEBUG: Shim setHandlingSendEvent: called!");
             }
 
             let types = std::ffi::CString::new("v@:B").unwrap();

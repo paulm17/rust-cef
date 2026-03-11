@@ -11,12 +11,13 @@ Based on the [V1 Roadmap](./roadmap.md), the following items are implemented:
 - **Window Management**: Native window creation, resizing, visibility, and window configuration via `winit`.
 - **Asset Loading**: Embedded frontend assets, custom scheme handling, and MIME detection for bundled builds.
 - **Modern Frontend**: Use React, Vue, Svelte, or any web framework.
-- **IPC Bridge**: `window.rust.invoke()` request/response bridge with JSON serialization, routing, and error handling.
+- **IPC Bridge**: TypeScript `invoke()` wrapper over CEF `window.cefQuery`, with JSON serialization, routing, and error handling.
 - **File System Operations**: Read/write text and binary files, check existence, list directories, and fetch metadata from Rust.
 - **Native File Dialogs**: Open files, select multiple files, save files, and pick folders using native OS dialogs (`rfd`).
 - **System Tray**: Custom tray icon, tooltip, context menu, and show/hide window integration.
 - **Application Menus**: Native menus via `muda`, including shortcuts, checkable items, separators, and dynamic updates.
 - **Message Dialogs**: Native info, warning, error, and confirmation dialogs.
+- **Clipboard Access**: Read, write, and clear text clipboard contents through IPC.
 
 ## 🛠 Prerequisites
 
@@ -56,6 +57,7 @@ Based on the [V1 Roadmap](./roadmap.md), the following items are implemented:
     ```
 
     In dev mode (`--dev`), the app connects to `http://localhost:5173` (Vite) for hot-reloading.
+    Pass `--devtools` or set `RUST_CEF_OPEN_DEVTOOLS=1` to auto-open CEF DevTools once the dev UI finishes loading.
 
 4.  **Build for Release:**
     ```bash
@@ -117,7 +119,7 @@ fn main() {
         .resizable(true)
         // 3. Provide the asset resolver
         .assets(|path| Assets::get(path))
-        // 4. Register IPC commands (Frontend calls window.rust.invoke('greet', { name: 'World' }))
+        // 4. Register IPC commands (Frontend calls invoke('greet', { name: 'World' }))
         .register_ipc("greet", |args| {
             let name = args["name"].as_str().unwrap_or("Stranger");
             Ok(json!({ "message": format!("Hello, {}!", name) }))
@@ -128,6 +130,7 @@ fn main() {
             command: "bun dev".to_string(),
             url: "http://localhost:5173".to_string(), // Vite default
             cwd: Some("frontend".to_string()),
+            open_devtools: false,
         });
 
     // 6. Run the application
@@ -139,27 +142,31 @@ fn main() {
 
 ### 4. IPC Bridge (Frontend Implementation)
 
-In your frontend code (e.g., `App.tsx`), add the type definition and invoke function:
+In this repo, frontend code calls the exported `invoke()` helper from `frontend/src/rust-api.ts`. That helper uses `callRust()` from `frontend/src/ipc.ts`, which sends JSON over CEF's `window.cefQuery` bridge.
 
 ```typescript
-// Type definition
-declare global {
-  interface Window {
-    rust: {
-      invoke(command: string, args?: any): Promise<any>;
-    };
-  }
-}
+import { invoke } from './rust-api';
 
 // Usage
 const handleGreet = async () => {
   try {
-    const response = await window.rust.invoke('greet', { name: 'Rust' });
+    const response = await invoke<{ message: string }>('greet', { name: 'Rust' });
     console.log(response.message); // Output: "Hello, Rust!"
   } catch (error) {
     console.error(error);
   }
 };
+```
+
+For manual testing in DevTools, import the wrapper directly:
+
+```typescript
+const { invoke, RustClipboard } = await import('/src/rust-api.ts');
+
+await invoke('greet', { name: 'Rust' });
+await RustClipboard.writeText('hello');
+await RustClipboard.readText();
+await RustClipboard.clear();
 ```
 
 ### 5. Building and Bundling
@@ -177,9 +184,11 @@ cargo run -- --dev
 
 Current V1 roadmap status:
 
-- Completed: Window Management, Asset Loading, Simple IPC Bridge, File System Operations, Native File Dialogs, System Tray, Application Menus, and Message Dialogs.
-- Not completed yet: Clipboard Access and Basic Packaging.
+- Completed: Window Management, Asset Loading, Simple IPC Bridge, File System Operations, Native File Dialogs, System Tray, Application Menus, Message Dialogs, and text Clipboard Access.
+- Not completed yet: Basic Packaging.
 - Next phase: See [roadmap.md](./roadmap.md) for the remaining V1 work and planned V2 features like advanced IPC and Electron parity.
+
+Use `RUST_LOG=debug cargo run -- --dev` for verbose startup and IPC logging.
 
 ## 📄 License
 

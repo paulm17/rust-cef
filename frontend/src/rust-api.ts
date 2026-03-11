@@ -155,3 +155,18 @@ export class RustOS {
         return invoke<{ status: string, count: number }>('set_badge_count', { count });
     }
 }
+
+export class RustClipboard {
+    static async readText(): Promise<string> {
+        const result = await invoke<{ text: string }>('clipboard_read_text');
+        return result.text;
+    }
+
+    static async writeText(text: string): Promise<void> {
+        await invoke<{ status: string }>('clipboard_write_text', { text });
+    }
+
+    static async clear(): Promise<void> {
+        await invoke<{ status: string }>('clipboard_clear');
+    }
+}

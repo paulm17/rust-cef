@@ -1,4 +1,5 @@
-pub mod fs;
+pub mod clipboard;
 pub mod dialog;
-pub mod window;
+pub mod fs;
 pub mod os;
+pub mod window;
