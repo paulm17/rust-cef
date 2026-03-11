@@ -12,7 +12,7 @@ pub fn start_download(
         .and_then(|value| value.as_str())
         .ok_or_else(|| "Missing required string field 'url'".to_string())?
         .to_string();
-    crate::security::enforce_url_policy(&url, cfg!(debug_assertions))?;
+    crate::security::enforce_url_policy(&url, crate::security::runtime_dev_mode())?;
 
     let response_rx = {
         let (response_tx, response_rx) = std::sync::mpsc::channel();

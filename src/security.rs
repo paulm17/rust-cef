@@ -1,21 +1,32 @@
 use serde_json::Value;
+use std::sync::OnceLock;
+
+static RUNTIME_DEV_MODE: OnceLock<bool> = OnceLock::new();
+
+pub fn set_runtime_dev_mode(dev_mode: bool) {
+    let _ = RUNTIME_DEV_MODE.set(dev_mode);
+}
+
+pub fn runtime_dev_mode() -> bool {
+    *RUNTIME_DEV_MODE.get_or_init(|| false)
+}
 
 pub fn enforce_url_policy(url: &str, dev_mode: bool) -> Result<(), String> {
-    if url.starts_with("app://")
-        || url.starts_with("https://")
-        || url.starts_with("file://")
-        || url.starts_with("data:")
-        || url == "about:blank"
+    if url.starts_with("app://") || url == "about:blank" {
+        return Ok(());
+    }
+
+    if dev_mode
+        && (is_loopback_http(url)
+            || url.starts_with("https://")
+            || url.starts_with("file://")
+            || url.starts_with("data:"))
     {
         return Ok(());
     }
 
-    if dev_mode && is_loopback_http(url) {
-        return Ok(());
-    }
-
     Err(format!(
-        "Blocked insecure or unsupported URL by policy: {url}. Use https://, app://, file://, or data: URLs."
+        "Blocked insecure or unsupported URL by policy: {url}. Production windows must use app:// URLs."
     ))
 }
 

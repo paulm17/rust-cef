@@ -349,6 +349,7 @@ impl App {
         set_debug_mode(debug_flag);
 
         let dev_flag = args.iter().any(|a| a == "--dev");
+        crate::security::set_runtime_dev_mode(dev_flag);
         let is_subprocess = args.iter().any(|a| a.starts_with("--type="));
         let single_instance_mode = if !is_subprocess {
             Some(crate::single_instance::acquire(&args)?)
@@ -676,7 +677,7 @@ impl App {
         // app is already created above
         print_debug("DEBUG: Creating CEF settings");
         let mut settings = cef::Settings::default();
-        settings.no_sandbox = 1;
+        settings.no_sandbox = if dev_flag { 1 } else { 0 };
         settings.log_severity = cef::LogSeverity::INFO;
 
         #[cfg(target_os = "macos")]

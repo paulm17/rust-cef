@@ -12,7 +12,7 @@ pub fn create_window(
         .and_then(|v| v.as_str())
         .unwrap_or("app://localhost/index.html")
         .to_string();
-    crate::security::enforce_url_policy(&url, cfg!(debug_assertions))?;
+    crate::security::enforce_url_policy(&url, crate::security::runtime_dev_mode())?;
     let title = args
         .get("title")
         .and_then(|v| v.as_str())

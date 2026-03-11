@@ -112,16 +112,23 @@ impl ImplApp for AppBuilder {
         let Some(command_line) = command_line else {
             return;
         };
+        let dev_mode = std::env::args().any(|arg| arg == "--dev");
 
         // ... command line switches ...
         command_line.append_switch(Some(&"disable-javascript-open-windows".into()));
-        command_line.append_switch(Some(&"disable-web-security".into()));
         command_line.append_switch(Some(&"hide-crash-restore-bubble".into()));
         command_line.append_switch(Some(&"disable-chrome-login-prompt".into()));
-        command_line.append_switch(Some(&"allow-running-insecure-content".into()));
         command_line.append_switch(Some(&"no-startup-window".into()));
         command_line.append_switch(Some(&"disable-popup-blocking".into()));
         command_line.append_switch(Some(&"noerrdialogs".into()));
+        if dev_mode {
+            command_line.append_switch(Some(&"disable-web-security".into()));
+            command_line.append_switch(Some(&"allow-running-insecure-content".into()));
+            command_line.append_switch_with_value(
+                Some(&"remote-debugging-port".into()),
+                Some(&"9229".into()),
+            );
+        }
 
         #[cfg(target_os = "macos")]
         {
@@ -138,8 +145,6 @@ impl ImplApp for AppBuilder {
 
         command_line.append_switch(Some(&"disable-spell-checking".into()));
         command_line.append_switch(Some(&"disable-session-crashed-bubble".into()));
-        command_line
-            .append_switch_with_value(Some(&"remote-debugging-port".into()), Some(&"9229".into()));
     }
 
     fn on_register_custom_schemes(&self, registrar: Option<&mut SchemeRegistrar>) {

@@ -1,195 +1,175 @@
 # Rust + CEF Desktop Application
 
-A high-performance desktop application framework using **Rust** for the backend and **CEF (Chromium Embedded Framework)** for the frontend. This project aims to provide an Electron-like experience but with the performance and safety of Rust, bypassing the need for Node.js in the main process.
+Rust + CEF desktop shell with a typed frontend bridge, embedded `app://` assets for production, and a dev workflow based on Bun/Vite.
 
-> **Status**: V1 Milestone (Basic Desktop App) - Functional
+## Status
 
-## 🚀 Features
+This repo has completed the low-, medium-, and high-feature implementation phases from the current roadmap. The remaining work is the packaging/release phase:
 
-Based on the [V1 Roadmap](./roadmap.md), the following items are implemented:
+- Windows MSI
+- macOS DMG
+- Linux packages
+- signing / notarization
+- updater work after packaging is stable
 
-- **Window Management**: Native window creation, resizing, visibility, and window configuration via `winit`.
-- **Asset Loading**: Embedded frontend assets, custom scheme handling, and MIME detection for bundled builds.
-- **Modern Frontend**: Use React, Vue, Svelte, or any web framework.
-- **IPC Bridge**: TypeScript `invoke()` wrapper over CEF `window.cefQuery`, with JSON serialization, routing, and error handling.
-- **File System Operations**: Read/write text and binary files, check existence, list directories, and fetch metadata from Rust.
-- **Native File Dialogs**: Open files, select multiple files, save files, and pick folders using native OS dialogs (`rfd`).
-- **System Tray**: Custom tray icon, tooltip, context menu, and show/hide window integration.
-- **Application Menus**: Native menus via `muda`, including shortcuts, checkable items, separators, and dynamic updates.
-- **Message Dialogs**: Native info, warning, error, and confirmation dialogs.
-- **Clipboard Access**: Read, write, and clear text clipboard contents through IPC.
+See [roadmap.md](/Volumes/Data/Users/paul/development/src/github/rust-cef/roadmap.md) for the detailed matrix.
 
-## 🛠 Prerequisites
+## Implemented Features
 
-- **Rust**: Latest stable version.
-- **Bun**: For building the frontend (faster than Node/NPM).
-- **macOS/Linux/Windows**: Currently optimized and tested primarily on **macOS**.
+### Low
 
-## 📦 Installation & Quick Start (Running the Example)
+- text clipboard read/write/clear
+- structured logging with `tracing`
+- devtools auto-open flag
+- dev-server startup and hot reload flow
 
-1.  **Clone the repository:**
-    ```bash
-    git clone https://github.com/your-username/rust-cef.git
-    cd rust-cef
-    ```
+### Medium
 
-2.  **Install Frontend Dependencies:**
-    ```bash
-    cd frontend
-    bun install
-    cd ..
-    ```
+- print to PDF
+- download manager
+- error reporting
+- HTTPS / startup URL policy
+- permission denial by default
+- deep linking and file association handoff
+- global shortcuts
+- rich notifications
+- streamed file URLs over `app://`
+- icon set generation
 
-3.  **Build and Run (Dev Mode):**
-    
-    The first run requires setting up the CEF frameworks.
-    
-    ```bash
-    # 1. Build Rust binary (this extracts CEF frameworks)
-    cargo build
-    
-    # 2. Setup Frameworks structure (Required for macOS)
-    chmod +x bundle_app.sh
-    ./bundle_app.sh
-    
-    # 3. Run in Dev Mode (Starts Bun dev server + Rust app)
-    cargo run -- --dev
-    ```
+### High
 
-    In dev mode (`--dev`), the app connects to `http://localhost:5173` (Vite) for hot-reloading.
-    Pass `--devtools` or set `RUST_CEF_OPEN_DEVTOOLS=1` to auto-open CEF DevTools once the dev UI finishes loading.
+- event-capable CEF IPC bridge
+- binary payload helpers for frontend IPC
+- bidirectional Rust to JS events
+- single-instance lock with launch handoff
+- image clipboard read/write
 
-4.  **Build for Release:**
-    ```bash
-    cargo build --release
-    ./bundle_app.sh # Bundles into rust-cef.app in target/release
-    ```
-    
-    The release app will use the embedded assets from `frontend/dist`.
+## Security Model
 
-## 📖 Usage Guide: Creating a New Project
+### Production
 
-This section explains how to use `rust-cef` as a library to build your own desktop applications.
+- frontend is expected to load from `app://localhost/...`
+- production URL policy only allows `app://` and `about:blank`
+- insecure dev-only browser flags are not enabled
+- remote debugging is not enabled
+- CEF sandbox is enabled in production builds
 
-### 1. Project Structure
+Relevant code:
 
-A typical project structure should look like this:
+- [app.rs](/Volumes/Data/Users/paul/development/src/github/rust-cef/src/app.rs)
+- [security.rs](/Volumes/Data/Users/paul/development/src/github/rust-cef/src/security.rs)
+- [lib.rs](/Volumes/Data/Users/paul/development/src/github/rust-cef/src/lib.rs)
 
-```
-my-app/
-├── Cargo.toml          # Rust dependencies
-├── build.rs            # Build script for frontend assets
-├── bundle_app.sh       # Bundling script (copy from this repo)
-├── src/
-│   └── main.rs         # Application entry point
-└── frontend/           # Your React/Vue/Svelte app
-    ├── package.json
-    ├── vite.config.ts
-    └── src/
-```
+### Development
 
-### 2. Dependencies
+- `cargo run -- --dev` loads the frontend from `http://localhost:5173`
+- dev mode allows loopback HTTP plus a few permissive browser flags so Vite hot reload works
+- `--devtools` or `RUST_CEF_OPEN_DEVTOOLS=1` opens CEF DevTools automatically
 
-Add `rust-cef` and other required crates to your `Cargo.toml`:
+### Audit Notes
 
-```toml
-[dependencies]
-rust-cef = { git = "https://github.com/your-username/rust-cef" } # Or local path
-rust-embed = "8.5"
-serde_json = "1.0"
-```
+The main remaining isolation caveat is architectural rather than configuration:
 
-### 3. Application Entry Point (`src/main.rs`)
+- any XSS inside an `app://` page still has access to the native IPC bridge via `window.cefQuery`
 
-```rust
-use rust_cef::App;
-use rust_embed::RustEmbed;
-use serde_json::json;
+That means `app://` isolation is now materially stronger than before, but frontend integrity and XSS prevention still matter.
 
-// 1. Embed your frontend assets
-#[derive(RustEmbed)]
-#[folder = "frontend/dist"]
-struct Assets;
+## Prerequisites
 
-fn main() {
-    // 2. Configure the Application
-    let app = App::new()
-        .title("My Awesome App")
-        .size(1024.0, 768.0)
-        .resizable(true)
-        // 3. Provide the asset resolver
-        .assets(|path| Assets::get(path))
-        // 4. Register IPC commands (Frontend calls invoke('greet', { name: 'World' }))
-        .register_ipc("greet", |args| {
-            let name = args["name"].as_str().unwrap_or("Stranger");
-            Ok(json!({ "message": format!("Hello, {}!", name) }))
-        })
-        // 5. Configure Dev Mode (Hot Reloading)
-        // Ensure you have a valid command and URL for your frontend dev server
-        .dev_config(rust_cef::DevConfig {
-            command: "bun dev".to_string(),
-            url: "http://localhost:5173".to_string(), // Vite default
-            cwd: Some("frontend".to_string()),
-            open_devtools: false,
-        });
+- Rust stable
+- Bun
+- macOS is the primary tested target right now
 
-    // 6. Run the application
-    if let Err(e) = app.run() {
-        eprintln!("Error: {}", e);
-    }
-}
-```
+## Quick Start
 
-### 4. IPC Bridge (Frontend Implementation)
-
-In this repo, frontend code calls the exported `invoke()` helper from `frontend/src/rust-api.ts`. That helper uses `callRust()` from `frontend/src/ipc.ts`, which sends JSON over CEF's `window.cefQuery` bridge.
-
-```typescript
-import { invoke } from './rust-api';
-
-// Usage
-const handleGreet = async () => {
-  try {
-    const response = await invoke<{ message: string }>('greet', { name: 'Rust' });
-    console.log(response.message); // Output: "Hello, Rust!"
-  } catch (error) {
-    console.error(error);
-  }
-};
-```
-
-For manual testing in DevTools, import the wrapper directly:
-
-```typescript
-const { invoke, RustClipboard } = await import('/src/rust-api.ts');
-
-await invoke('greet', { name: 'Rust' });
-await RustClipboard.writeText('hello');
-await RustClipboard.readText();
-await RustClipboard.clear();
-```
-
-### 5. Building and Bundling
-
-CEF requires a specific bundle structure on macOS. You cannot simply run `cargo run` without setting up the Frameworks first. Ensure you copy the `bundle_app.sh` script from this repository to your project root and run it after `cargo build`.
+### Dev Mode
 
 ```bash
+cd frontend
+bun install
+cd ..
+
 cargo build
 chmod +x bundle_app.sh
 ./bundle_app.sh
+
 cargo run -- --dev
 ```
 
-## 🏗 Roadmap
+Useful variants:
 
-Current V1 roadmap status:
+```bash
+RUST_LOG=debug cargo run -- --dev
+cargo run -- --dev --devtools
+```
 
-- Completed: Window Management, Asset Loading, Simple IPC Bridge, File System Operations, Native File Dialogs, System Tray, Application Menus, Message Dialogs, and text Clipboard Access.
-- Not completed yet: Basic Packaging.
-- Next phase: See [roadmap.md](./roadmap.md) for the remaining V1 work and planned V2 features like advanced IPC and Electron parity.
+### Release Build
 
-Use `RUST_LOG=debug cargo run -- --dev` for verbose startup and IPC logging.
+```bash
+cd frontend
+bun run build
+cd ..
 
-## 📄 License
+cargo build --release
+./bundle_app.sh
+```
+
+## Frontend Bridge
+
+Use the wrappers from [rust-api.ts](/Volumes/Data/Users/paul/development/src/github/rust-cef/frontend/src/rust-api.ts).
+
+Example:
+
+```ts
+import { invoke, RustClipboard, RustOS, RustFileSystem } from './rust-api';
+
+const info = await invoke<{ name: string; version: string }>('get_app_info');
+await RustClipboard.writeText('hello');
+const launch = await RustOS.getLaunchContext();
+const stream = await RustFileSystem.createFileStreamUrl('/absolute/path/to/file.pdf');
+```
+
+The demo app in [App.tsx](/Volumes/Data/Users/paul/development/src/github/rust-cef/frontend/src/App.tsx) includes test controls for:
+
+- shortcuts
+- notifications
+- streamed file URLs
+- image clipboard
+- app-event polling
+
+## Production vs Dev URLs
+
+- dev: `http://localhost:5173`
+- production: `app://localhost/index.html`
+
+The custom scheme handler is implemented in [scheme_handler.rs](/Volumes/Data/Users/paul/development/src/github/rust-cef/src/platform/scheme_handler.rs).
+
+## Packaging Phase
+
+The next phase is release engineering rather than feature work:
+
+1. Windows MSI output
+2. macOS `.app` + DMG output
+3. Linux `.deb` / `.rpm` / AppImage output
+4. signing and notarization pipeline
+5. updater integration after installers are stable
+
+## Verification
+
+Current automated verification:
+
+```bash
+cargo test
+```
+
+Manual verification is still important for:
+
+- packaged production launch
+- sandboxed production behavior
+- global shortcut firing
+- notification UX
+- installer/signing output
+
+## License
 
 MIT
