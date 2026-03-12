@@ -210,6 +210,20 @@ export interface StartDownloadOptions {
     show_dialog?: boolean;
 }
 
+export interface UpdateManifest {
+    version: string;
+    url: string;
+    notes?: string;
+    pub_date?: string;
+    signature?: string;
+}
+
+export interface UpdaterConfig {
+    manifest_url?: string | null;
+    channel: string;
+    current_version: string;
+}
+
 export class RustBrowser {
     static async printToPdf(options: PrintToPdfOptions): Promise<{ status: string; path: string }> {
         return invoke<{ status: string; path: string }>('print_to_pdf', options as unknown as Record<string, unknown>);
@@ -217,6 +231,61 @@ export class RustBrowser {
 
     static async startDownload(options: StartDownloadOptions): Promise<{ status: string; url: string }> {
         return invoke<{ status: string; url: string }>('start_download', options as unknown as Record<string, unknown>);
+    }
+}
+
+export class RustUpdater {
+    static async getConfig(): Promise<UpdaterConfig> {
+        return invoke<UpdaterConfig>('get_updater_config');
+    }
+
+    static async checkForUpdates(manifestUrl?: string): Promise<{
+        status: string;
+        current_version: string;
+        manifest_url: string;
+        channel: string;
+        update_available: boolean;
+        manifest: UpdateManifest;
+    }> {
+        const args = manifestUrl ? { manifest_url: manifestUrl } : {};
+        return invoke<{
+            status: string;
+            current_version: string;
+            manifest_url: string;
+            channel: string;
+            update_available: boolean;
+            manifest: UpdateManifest;
+        }>('check_for_updates', args);
+    }
+
+    static async downloadUpdate(options: {
+        manifest_url?: string;
+        url?: string;
+        output_path?: string;
+    } = {}): Promise<{
+        status: string;
+        url: string;
+        path: string;
+        manifest?: UpdateManifest;
+    }> {
+        return invoke<{
+            status: string;
+            url: string;
+            path: string;
+            manifest?: UpdateManifest;
+        }>('download_update', options as Record<string, unknown>);
+    }
+
+    static async installUpdate(path: string): Promise<{
+        status: string;
+        path: string;
+        launcher: string;
+    }> {
+        return invoke<{
+            status: string;
+            path: string;
+            launcher: string;
+        }>('install_update', { path });
     }
 }
 

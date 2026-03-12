@@ -12,7 +12,8 @@ This repo has completed the low-, medium-, and high-feature implementation phase
 - Windows MSI / NSIS packaging commands are implemented through `cargo-packager`
 - Linux `.deb` / AppImage / Pacman packaging commands are implemented through `cargo-packager`
 - signing / notarization hooks are configurable through environment variables and CI
-- updater work is still deferred until installers are stable
+- updater phase 1 is implemented: manifest checks and staged downloads
+- updater phase 2 is started: native installer handoff
 
 See [roadmap.md](/Volumes/Data/Users/paul/development/src/github/rust-cef/roadmap.md) for the detailed matrix.
 
@@ -45,6 +46,7 @@ See [roadmap.md](/Volumes/Data/Users/paul/development/src/github/rust-cef/roadma
 - bidirectional Rust to JS events
 - single-instance lock with launch handoff
 - image clipboard read/write
+- updater manifest checks and staged package download
 
 ## Security Model
 
@@ -151,12 +153,13 @@ Use the wrappers from [rust-api.ts](/Volumes/Data/Users/paul/development/src/git
 Example:
 
 ```ts
-import { invoke, RustClipboard, RustOS, RustFileSystem } from './rust-api';
+import { invoke, RustClipboard, RustOS, RustFileSystem, RustUpdater } from './rust-api';
 
 const info = await invoke<{ name: string; version: string }>('get_app_info');
 await RustClipboard.writeText('hello');
 const launch = await RustOS.getLaunchContext();
 const stream = await RustFileSystem.createFileStreamUrl('/absolute/path/to/file.pdf');
+const update = await RustUpdater.checkForUpdates();
 ```
 
 The demo app in [App.tsx](/Volumes/Data/Users/paul/development/src/github/rust-cef/frontend/src/App.tsx) includes test controls for:
@@ -183,6 +186,7 @@ Current packaging coverage:
 3. optional Windows NSIS installer via `./package.sh --os windows --format nsis`
 4. Linux `.deb`, AppImage, and Pacman outputs via `./package.sh --os linux`
 5. signing and notarization environment hooks plus CI matrix in [release-packaging.yml](/Volumes/Data/Users/paul/development/src/github/rust-cef/.github/workflows/release-packaging.yml)
+6. updater phase 1 via `get_updater_config`, `check_for_updates`, and `download_update`
 
 `rpm` is not listed because the installed `cargo-packager` CLI on this machine does not expose an RPM format.
 
@@ -194,6 +198,44 @@ The current macOS packaging implementation lives in:
 The legacy shell entrypoints [bundle_app.sh](/Volumes/Data/Users/paul/development/src/github/rust-cef/bundle_app.sh) and [package.sh](/Volumes/Data/Users/paul/development/src/github/rust-cef/package.sh) now delegate to `xtask` so the bundle logic stays in one reusable Rust implementation.
 
 Packaging details and environment variables are documented in [packaging/README.md](/Volumes/Data/Users/paul/development/src/github/rust-cef/packaging/README.md).
+
+## Updater
+
+The current updater implementation is a pragmatic first pass:
+
+- manifest-based update checks
+- semantic version comparison
+- staged package download to a local path
+- installer handoff through the native platform launcher
+
+Configure it with:
+
+```bash
+export RUST_CEF_UPDATE_MANIFEST_URL="https://example.com/rust-cef/update.json"
+export RUST_CEF_UPDATE_CHANNEL="stable"
+```
+
+Expected manifest shape:
+
+```json
+{
+  "version": "0.2.0",
+  "url": "https://example.com/Rust%20CEF.dmg",
+  "notes": "Release notes",
+  "pub_date": "2026-03-11",
+  "signature": "optional-signature"
+}
+```
+
+Frontend API:
+
+```ts
+const check = await RustUpdater.checkForUpdates();
+const download = await RustUpdater.downloadUpdate();
+await RustUpdater.installUpdate(download.path);
+```
+
+The current phase does not yet perform signature verification, in-place replacement, rollback, or channel-specific rollout policy.
 
 ## Verification
 

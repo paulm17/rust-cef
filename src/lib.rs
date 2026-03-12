@@ -34,6 +34,7 @@ pub mod security;
 pub mod single_instance;
 pub mod state;
 pub mod tray;
+pub mod updater;
 pub mod window_manager;
 
 use app::AppBuilder;

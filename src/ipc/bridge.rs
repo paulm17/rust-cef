@@ -239,6 +239,22 @@ impl CommandRouter {
             "poll_global_shortcut_events",
             crate::ipc::commands::os::poll_global_shortcut_events,
         );
+        self.register(
+            "get_updater_config",
+            crate::ipc::commands::updater::get_updater_config,
+        );
+        self.register(
+            "check_for_updates",
+            crate::ipc::commands::updater::check_for_updates,
+        );
+        self.register(
+            "download_update",
+            crate::ipc::commands::updater::download_update,
+        );
+        self.register(
+            "install_update",
+            crate::ipc::commands::updater::install_update,
+        );
         self.register("poll_app_events", crate::ipc::commands::os::poll_app_events);
         self.register("clipboard_read_text", |args, _| {
             crate::ipc::commands::clipboard::clipboard_read_text(args)

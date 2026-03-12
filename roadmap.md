@@ -643,7 +643,7 @@ Match Electron's feature set for professional desktop applications. Add advanced
 | macOS DMG ✅ | macOS disk image output | reusable packager crate + `xtask package-macos` | High |
 | Linux Packages ✅ | .deb, AppImage, Pacman outputs | `cargo-packager` via `xtask package-linux` | High |
 | Signing / Notarization ✅ | Trusted execution and platform trust | env-driven signing hooks + CI workflow | High |
-| Auto-Updater | Background updates | `self_update` + backend | High |
+| Auto-Updater ◐ | Background updates | manifest check + staged download + installer handoff | High |
 | Icon Sets ✅ | Multi-resolution icons | Image generation | Medium |
 
 **Packaging Phase Deliverables:**
@@ -652,7 +652,8 @@ Match Electron's feature set for professional desktop applications. Add advanced
 - Windows MSI / NSIS packaging commands
 - Linux package commands for `.deb`, AppImage, and Pacman
 - signing/notarization configuration and CI hooks
-- updater design after installers are stable
+- updater phase 1: manifest-based update checks, staged package download, and installer handoff
+- remaining updater work: signature verification, rollback, channel policy, in-place replacement
 
 **Time Estimate:** 2-3 weeks
 
