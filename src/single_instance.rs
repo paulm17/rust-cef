@@ -9,11 +9,12 @@ pub struct ExternalLaunchPayload {
     pub args: Vec<String>,
 }
 
-fn socket_path() -> PathBuf {
+fn socket_path(app_id: &str) -> PathBuf {
     let base_dir = dirs::data_local_dir()
         .or_else(dirs::home_dir)
         .unwrap_or_else(std::env::temp_dir)
-        .join("rust-cef");
+        .join("rust-cef")
+        .join(app_id);
     base_dir.join("single-instance.sock")
 }
 
@@ -29,8 +30,8 @@ pub enum InstanceMode {
 }
 
 #[cfg(unix)]
-pub fn acquire(args: &[String]) -> Result<InstanceMode, String> {
-    let socket_path = socket_path();
+pub fn acquire(app_id: &str, args: &[String]) -> Result<InstanceMode, String> {
+    let socket_path = socket_path(app_id);
     if let Some(parent) = socket_path.parent() {
         std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
     }
@@ -59,7 +60,7 @@ pub fn acquire(args: &[String]) -> Result<InstanceMode, String> {
 }
 
 #[cfg(not(unix))]
-pub fn acquire(_args: &[String]) -> Result<InstanceMode, String> {
+pub fn acquire(_app_id: &str, _args: &[String]) -> Result<InstanceMode, String> {
     Ok(InstanceMode::Primary)
 }
 

@@ -100,6 +100,28 @@ pub static EVENT_LOOP_PROXY: OnceLock<
     std::sync::Mutex<winit::event_loop::EventLoopProxy<AppEvent>>,
 > = OnceLock::new();
 
+fn app_runtime_id(title: &str) -> String {
+    let mut id = String::with_capacity(title.len());
+    let mut prev_dash = false;
+
+    for ch in title.chars() {
+        if ch.is_ascii_alphanumeric() {
+            id.push(ch.to_ascii_lowercase());
+            prev_dash = false;
+        } else if !prev_dash {
+            id.push('-');
+            prev_dash = true;
+        }
+    }
+
+    let trimmed = id.trim_matches('-');
+    if trimmed.is_empty() {
+        "app".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 struct PdfPrintCallbackBridge {
     object: *mut cef::rc::RcImpl<cef::sys::_cef_pdf_print_callback_t, Self>,
     response_tx: mpsc::Sender<Result<serde_json::Value, String>>,
@@ -350,10 +372,11 @@ impl App {
         set_debug_mode(debug_flag);
 
         let dev_flag = args.iter().any(|a| a == "--dev");
+        let app_id = app_runtime_id(&self.title);
         crate::security::set_runtime_dev_mode(dev_flag);
         let is_subprocess = args.iter().any(|a| a.starts_with("--type="));
         let single_instance_mode = if !is_subprocess {
-            Some(crate::single_instance::acquire(&args)?)
+            Some(crate::single_instance::acquire(&app_id, &args)?)
         } else {
             None
         };
@@ -367,6 +390,7 @@ impl App {
         init_logging(dev_flag, debug_flag);
         tracing::info!(
             pid = std::process::id(),
+            app_id = %app_id,
             dev_mode = dev_flag,
             debug_mode = debug_flag,
             "application starting"
@@ -399,9 +423,12 @@ impl App {
             "about:blank".to_string()
         } else if dev_flag && !is_bundle {
             if let Some(config) = &self.dev_config {
+                let should_spawn_dev_server = !config.command.trim().is_empty();
                 dev_target_port = parse_port_from_url(&config.url);
-                if let Some(port) = dev_target_port {
-                    kill_processes_on_port(port);
+                if should_spawn_dev_server {
+                    if let Some(port) = dev_target_port {
+                        kill_processes_on_port(port);
+                    }
                 }
 
                 print_debug(&format!(
@@ -409,75 +436,68 @@ impl App {
                     log_prefix, config.command
                 ));
 
-                // Split command into program and args
-                let mut parts = config.command.split_whitespace();
-                if let Some(program) = parts.next() {
-                    let mut cmd = std::process::Command::new(program);
-                    cmd.args(parts);
+                if should_spawn_dev_server {
+                    let mut parts = config.command.split_whitespace();
+                    if let Some(program) = parts.next() {
+                        let mut cmd = std::process::Command::new(program);
+                        cmd.args(parts);
 
-                    if let Some(cwd) = &config.cwd {
-                        let absolute_cwd = std::fs::canonicalize(cwd);
-                        print_debug(&format!(
-                            "{} DEBUG: Resolved CWD for dev server: {:?}",
-                            log_prefix, absolute_cwd
-                        ));
-                        cmd.current_dir(cwd);
-                    }
-                    // Disable Vite/Bun opening the default system browser
-                    cmd.env("BROWSER", "none");
-
-                    // Explicitly inherit stdout/stderr so we can see bun output
-                    // Use piped output to avoid FD conflicts with CEF and to prefix logs
-                    cmd.stdout(std::process::Stdio::piped());
-                    cmd.stderr(std::process::Stdio::piped());
-
-                    // Set process group to 0 to create a new PGID (same as PID)
-                    // This allows us to kill the whole tree (bun -> node -> vite) later
-                    cmd.process_group(0);
-
-                    print_debug(&format!(
-                        "{} DEBUG: Spawning command: '{}' (PGID: New)",
-                        log_prefix, config.command
-                    ));
-
-                    match cmd.spawn() {
-                        Ok(mut child) => {
-                            tracing::info!(pid = child.id(), "{} dev server spawned", log_prefix);
-
-                            // Spawn threads to pipe output
-                            if let Some(stdout) = child.stdout.take() {
-                                std::thread::spawn(move || {
-                                    use std::io::{BufRead, BufReader};
-                                    let reader = BufReader::new(stdout);
-                                    for line in reader.lines() {
-                                        if let Ok(l) = line {
-                                            tracing::info!("[dev-server] {}", l);
-                                        }
-                                    }
-                                });
-                            }
-
-                            if let Some(stderr) = child.stderr.take() {
-                                std::thread::spawn(move || {
-                                    use std::io::{BufRead, BufReader};
-                                    let reader = BufReader::new(stderr);
-                                    for line in reader.lines() {
-                                        if let Ok(l) = line {
-                                            tracing::warn!("[dev-server] {}", l);
-                                        }
-                                    }
-                                });
-                            }
-
-                            dev_process = Some(child);
+                        if let Some(cwd) = &config.cwd {
+                            let absolute_cwd = std::fs::canonicalize(cwd);
+                            print_debug(&format!(
+                                "{} DEBUG: Resolved CWD for dev server: {:?}",
+                                log_prefix, absolute_cwd
+                            ));
+                            cmd.current_dir(cwd);
                         }
-                        Err(e) => {
-                            tracing::error!("{} failed to spawn dev server: {}", log_prefix, e);
-                            tracing::error!(
-                                "{} ensure '{}' is in PATH and 'frontend' exists",
-                                log_prefix,
-                                program
-                            );
+
+                        cmd.env("BROWSER", "none");
+                        cmd.stdout(std::process::Stdio::piped());
+                        cmd.stderr(std::process::Stdio::piped());
+                        cmd.process_group(0);
+
+                        print_debug(&format!(
+                            "{} DEBUG: Spawning command: '{}' (PGID: New)",
+                            log_prefix, config.command
+                        ));
+
+                        match cmd.spawn() {
+                            Ok(mut child) => {
+                                tracing::info!(pid = child.id(), "{} dev server spawned", log_prefix);
+
+                                if let Some(stdout) = child.stdout.take() {
+                                    std::thread::spawn(move || {
+                                        use std::io::{BufRead, BufReader};
+                                        let reader = BufReader::new(stdout);
+                                        for line in reader.lines() {
+                                            if let Ok(l) = line {
+                                                tracing::info!("[dev-server] {}", l);
+                                            }
+                                        }
+                                    });
+                                }
+
+                                if let Some(stderr) = child.stderr.take() {
+                                    std::thread::spawn(move || {
+                                        use std::io::{BufRead, BufReader};
+                                        let reader = BufReader::new(stderr);
+                                        for line in reader.lines() {
+                                            if let Ok(l) = line {
+                                                tracing::warn!("[dev-server] {}", l);
+                                            }
+                                        }
+                                    });
+                                }
+
+                                dev_process = Some(child);
+                            }
+                            Err(e) => {
+                                tracing::error!("{} failed to spawn dev server: {}", log_prefix, e);
+                                tracing::error!(
+                                    "{} ensure dev command is valid and cwd exists",
+                                    log_prefix
+                                );
+                            }
                         }
                     }
                 }
@@ -740,12 +760,16 @@ impl App {
 
                 // Use a safe cache directory outside the bundle
                 if let Some(mut cache_dir) = std::env::temp_dir().canonicalize().ok() {
-                    cache_dir.push("rust-cef-cache");
+                    cache_dir.push(format!("rust-cef-cache-{}", app_id));
                     print_debug(&format!("DEBUG: Cache path: {:?}", cache_dir));
                     settings.root_cache_path = cef::CefString::from(cache_dir.to_str().unwrap());
                 } else {
-                    settings.root_cache_path =
-                        cef::CefString::from(parent.join("cef_cache").to_str().unwrap());
+                    settings.root_cache_path = cef::CefString::from(
+                        parent
+                            .join(format!("cef_cache_{}", app_id))
+                            .to_str()
+                            .unwrap(),
+                    );
                 }
             }
         }
@@ -1499,8 +1523,15 @@ impl App {
                         let _ = child.wait();
                     }
 
-                    if let Some(port) = dev_target_port {
-                        kill_processes_on_port(port);
+                    if should_manage_dev_server(
+                        self.dev_config
+                            .as_ref()
+                            .map(|config| config.command.as_str())
+                            .unwrap_or(""),
+                    ) {
+                        if let Some(port) = dev_target_port {
+                            kill_processes_on_port(port);
+                        }
                     }
 
                     if let Some(callback) = &on_exit_callback {
@@ -1654,6 +1685,10 @@ impl App {
 
 fn parse_port_from_url(url: &str) -> Option<u16> {
     url::Url::parse(url).ok().and_then(|parsed| parsed.port())
+}
+
+fn should_manage_dev_server(command: &str) -> bool {
+    !command.trim().is_empty()
 }
 
 fn kill_processes_on_port(port: u16) {
