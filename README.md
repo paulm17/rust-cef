@@ -107,6 +107,52 @@ RUST_LOG=debug cargo run -- --dev
 cargo run -- --dev --devtools
 ```
 
+### Deferred Startup
+
+The library now supports a host-driven startup gate where the native window appears immediately,
+the host app reports weighted milestone progress, and CEF is initialized only after the host marks
+startup complete.
+
+Example:
+
+```bash
+cargo run --example deferred_startup
+```
+
+The example is implemented in [deferred_startup.rs](/Volumes/Data/Users/paul/development/src/github/rust-cef/examples/deferred_startup.rs).
+
+Host integration shape:
+
+```rust
+let coordinator = rust_cef::StartupCoordinator::new(vec![
+    rust_cef::MilestoneDefinition {
+        key: "config".into(),
+        label: "Loading configuration".into(),
+        weight: 25,
+        required: true,
+    },
+])?;
+
+let id = coordinator.milestone_id("config").unwrap();
+coordinator.start(id)?;
+coordinator.complete(id)?;
+coordinator.mark_ready_for_cef()?;
+
+let app = rust_cef::App::new()
+    .assets(|path| Assets::get(path))
+    .deferred_startup(rust_cef::DeferredStartupConfig {
+        coordinator,
+        ui: rust_cef::StartupUiConfig::default(),
+        transition_delay_ms: 350,
+    });
+```
+
+Current implementation note:
+
+- the splash renderer is now cross-platform and uses a CPU-drawn bitmap presented through `wgpu`
+- deferred startup keeps existing non-deferred behavior unchanged for existing consumers
+- child windows still use the normal direct CEF attach path
+
 ### Release Build
 
 ```bash

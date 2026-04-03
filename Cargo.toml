@@ -6,6 +6,7 @@ edition = "2021"
 [workspace]
 members = [
     ".",
+    "crates/rust-cef-startup",
     "crates/rust-cef-packager",
     "crates/xtask",
 ]
@@ -39,6 +40,11 @@ dirs = "6.0.0"
 toml = "1.0.6"
 global-hotkey = "0.6"
 notify-rust = "4"
+rust-cef-startup = { path = "crates/rust-cef-startup" }
+ab_glyph = "0.2.32"
+pollster = "0.3"
+tiny-skia = "0.11.4"
+wgpu = "27.0.1"
 
 [package.metadata.packager]
 product_name = "Rust CEF"
