@@ -796,7 +796,7 @@ impl App {
         let mut deferred_ready_at = None;
         let splash_visible_since = std::time::Instant::now();
         let mut browser_settings = cef::BrowserSettings::default();
-        browser_settings.local_storage = cef::State::DISABLED;
+        browser_settings.local_storage = cef::State::ENABLED;
 
         if let Some(config) = deferred_startup.as_ref() {
             let rx = config.coordinator.subscribe();
@@ -1775,7 +1775,7 @@ fn attach_main_browser(
     let (_client, client_handlers) = IcyClient::new(router.clone(), Some(proxy.clone()));
     let mut client = ClientBuilder::build(client_handlers);
     let mut browser_settings = cef::BrowserSettings::default();
-    browser_settings.local_storage = cef::State::DISABLED;
+    browser_settings.local_storage = cef::State::ENABLED;
 
     let window_info = build_child_window_info(window_manager, main_window_id)?;
     print_info("DEBUG: Creating browser with cef::browser_host_create_browser_sync");

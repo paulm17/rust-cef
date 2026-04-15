@@ -4,6 +4,7 @@ import viteLogo from '/vite.svg'
 import './App.css'
 import { invoke, RustClipboard, RustEvents, RustFileSystem, RustWindow, RustOS } from './rust-api'
 import type { ShowMessageDialogRequest } from './types'
+import { PersistentCounter } from './PersistentCounter'
 
 interface AppInfo {
   name: string;
@@ -459,10 +460,12 @@ function App() {
           <button onClick={handleGreet}>Greet</button>
           <button onClick={handleAppInfo}>App Info</button>
           <button onClick={handleEcho}>Echo</button>
-      <button onClick={handleCreateWindow}>New Window</button>
-      <button onClick={handleCreatePersistentWindow}>New window (persistence)</button>
+          <button onClick={handleCreateWindow}>New Window</button>
+          <button onClick={handleCreatePersistentWindow}>New window (persistence)</button>
           <button onClick={handleBadCommand} style={{ opacity: 0.7 }}>Bad Command</button>
         </div>
+
+        <PersistentCounter />
 
         <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', marginTop: '10px' }}>
           <button onClick={() => handleShowDialog('info')}>Info</button>
